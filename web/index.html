@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>出片台</title>
+  <link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">🎬 出片台</div>
+    <div class="status">
+      <span id="engine-status" class="dot pending">检测引擎…</span>
+      <span id="t2v-status" class="dot pending">检测文生视频…</span>
+      <span id="h3-status" class="dot pending">检测 MiniMax H3…</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="tabs">
+      <button class="tab active" data-mode="i2v">🖼️ 图生视频</button>
+      <button class="tab" data-mode="t2v">✍️ 文生视频</button>
+      <button class="tab" data-mode="story">📖 故事模式</button>
+    </div>
+
+    <!-- 图生视频 -->
+    <section id="panel-i2v" class="panel">
+      <div id="dropzone" class="dropzone">
+        <input type="file" id="image-input" accept="image/*" hidden>
+        <img id="preview" alt="预览" hidden>
+        <div id="drop-hint">点击或拖入一张图片<br><small>这就是视频的第一帧</small></div>
+      </div>
+      <label>想让画面怎么动？（可留空）</label>
+      <textarea id="i2v-prompt" rows="3" placeholder="例如：镜头缓慢推进，人物转头微笑…"></textarea>
+    </section>
+
+    <!-- 文生视频 -->
+    <section id="panel-t2v" class="panel" hidden>
+      <label>描述你想生成的画面</label>
+      <textarea id="t2v-prompt" rows="4" placeholder="例如：一个女孩在海边回眸一笑，发丝随风飘动…"></textarea>
+    </section>
+
+    <!-- 故事模式 -->
+    <section id="panel-story" class="panel" hidden>
+      <label>① 粘贴你的故事</label>
+      <textarea id="story-input" rows="5" placeholder="例如：从前有个小女孩住在森林里，养了一只小狐狸。一天小狐狸走丢了……"></textarea>
+      <div class="story-actions">
+        <div class="field">
+          <label>分镜数量（1~20）</label>
+          <input type="number" id="n-shots" min="1" max="20" value="6">
+        </div>
+        <button id="split-btn" class="generate">📋 拆成剧本</button>
+      </div>
+      <div id="shot-list"></div>
+      <div id="concat-area" hidden>
+        <button id="concat-btn" class="generate">🎬 拼接成片</button>
+        <div id="story-result"></div>
+      </div>
+    </section>
+
+    <div class="controls">
+      <div class="field">
+        <label>模型</label>
+        <select id="model">
+          <option value="wan">Wan 2.2</option>
+          <option value="h3">MiniMax H3</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>画面比例</label>
+        <select id="resolution">
+          <option>方屏 1:1</option>
+          <option>横屏 16:9</option>
+          <option>竖屏 9:16</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>时长</label>
+        <select id="duration">
+          <option>长 · 约5秒</option>
+          <option>中 · 约3秒</option>
+          <option>短 · 约2秒</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>精度（步数越多越精细、越慢）</label>
+        <select id="steps">
+          <option value="8">省时 · 8 步</option>
+          <option value="16">标准 · 16 步</option>
+          <option value="20" selected>高质量 · 20 步</option>
+          <option value="30">极致 · 30 步</option>
+        </select>
+      </div>
+      <button id="generate-btn" class="generate">✨ 生成视频</button>
+      <button id="add-queue-btn" class="again">➕ 加入清单</button>
+    </div>
+
+    <!-- 待生成清单（方式 B：先攒几条，再一起开始） -->
+    <section id="queue-list" hidden>
+      <div class="queue-head">
+        <span class="queue-title">📋 待生成清单（<b id="queue-count">0</b> 条）</span>
+        <button id="start-all-btn" class="generate">🚀 全部开始</button>
+        <button id="clear-queue-btn" class="again">清空</button>
+      </div>
+      <div id="queue-items"></div>
+    </section>
+
+    <!-- 任务队列面板：排队 / 进度 / 完成预览都在这 -->
+    <section class="history">
+      <h3>📊 任务队列</h3>
+      <div id="task-list"></div>
+    </section>
+  </main>
+
+  <script src="/web/app.js"></script>
+</body>
+</html>

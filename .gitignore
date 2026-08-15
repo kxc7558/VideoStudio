@@ -1,0 +1,21 @@
+# ---- 依赖 / 虚拟环境 ----
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 运行产物（生成的视频、上传的图片）----
+output/
+uploads/
+
+# ---- 密钥 / 本地配置（绝不上传）----
+secrets.py
+.env
+*.log
+server.log
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
