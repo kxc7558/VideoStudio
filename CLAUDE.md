@@ -16,7 +16,7 @@
 | --- | --- |
 | `app.py` | FastAPI 后端：任务表存内存，封装生成/故事/拼接/取消等接口 |
 | `comfy.py` | ComfyUI API 封装：提交工作流、轮询完成、WebSocket 进度、取消 |
-| `storyboard.py` | 调 DeepSeek 把故事拆成分镜（API key 在 `secrets.py`，已 gitignore） |
+| `storyboard.py` | 调 DeepSeek 把故事拆成分镜（API key 在 `local_config.py`，已 gitignore） |
 | `web/` | 三个 tab：图生视频 / 文生视频 / 故事模式 |
 | `workflows/` | ComfyUI 节点图 json（wan 的 `i2v_api.json`/`t2v_api.json` + h3 的 `h3_*_api.json`） |
 | `run.bat` | 一键启动脚本 |
@@ -37,7 +37,8 @@
 - **`/api/video/{id}` 和 `/api/tasks` 要回退磁盘** `output/*.mp4`（重启后内存 tasks 清空，但文件还在）。
 - **websockets 17 新 API**：`from websockets.asyncio.client import connect`（旧 `websockets.connect` 已废弃）。
 - **采样进度只能靠 WebSocket**，`/history` 不含 step 进度；搬运模型进显存那几分钟进度停在 0%（前端显示「加载模型…」）。
-- **API key 在 `secrets.py`**（已 gitignore），不在 `storyboard.py` 里。换 key 只改 `secrets.py`；模板见 `secrets.example.py`。
+- **API key 在 `local_config.py`**（已 gitignore），不在 `storyboard.py` 里。换 key 只改 `local_config.py`；模板见 `local_config.example.py`。
+- **不要给本地密钥文件起名叫 `secrets.py`**：会遮蔽 Python 标准库的 `secrets` 模块，导致 FastAPI 启动时 `ImportError: cannot import name 'token_hex'`（后端起不来、页面一直「拒绝连接」）。
 - 取消任务：`comfy.cancel(prompt_id)` — 排队中 `POST /queue {"delete":[id]}`，运行中 `POST /interrupt`。
 
 ## 依赖

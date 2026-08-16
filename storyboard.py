@@ -9,10 +9,11 @@ import httpx
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-v4-flash"
 
-# API key 不写死在代码里：优先读本地 secrets.py（已 gitignore），否则读环境变量。
-# 换 key 只改 secrets.py，不动代码；也避免把密钥提交到 GitHub。
+# API key 不写死在代码里：优先读本地 local_config.py（已 gitignore），否则读环境变量。
+# 换 key 只改 local_config.py，不动代码；也避免把密钥提交到 GitHub。
+# 注意：不能用 `import secrets`（那会命中标准库 secrets，读不到 key）。
 try:
-    from secrets import DEEPSEEK_KEY  # noqa: F401
+    from local_config import DEEPSEEK_KEY  # noqa: F401
 except ImportError:
     DEEPSEEK_KEY = os.environ.get("DEEPSEEK_KEY", "")
 

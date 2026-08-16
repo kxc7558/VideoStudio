@@ -9,7 +9,7 @@ output/
 uploads/
 
 # ---- 密钥 / 本地配置（绝不上传）----
-secrets.py
+local_config.py
 .env
 *.log
 server.log
