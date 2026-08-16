@@ -17,6 +17,7 @@
 | `app.py` | FastAPI 后端：任务表存内存，封装生成/故事/拼接/取消等接口 |
 | `comfy.py` | ComfyUI API 封装：提交工作流、轮询完成、WebSocket 进度、取消 |
 | `storyboard.py` | 调 DeepSeek 把故事拆成分镜（API key 在 `local_config.py`，已 gitignore） |
+| `ai.py` | AI 辅助：本地 Ollama(`qwen2.5vl:7b`) 看图 + DeepSeek 写叙事提示词 |
 | `web/` | 三个 tab：图生视频 / 文生视频 / 故事模式 |
 | `workflows/` | ComfyUI 节点图 json（wan 的 `i2v_api.json`/`t2v_api.json` + h3 的 `h3_*_api.json`） |
 | `run.bat` | 一键启动脚本 |
@@ -33,6 +34,14 @@
 - 自动接续：`/api/generate` 加 `segments`(1~6)，`_run_long_task` 逐段生成，段间「抽尾帧→下一段首帧」接续，最后 `concat_videos` 拼一条。尾帧抽取 `extract_last_frame`（ffmpeg `-sseof -0.2 -frames:v 1`）。
 - 故事模式「连续成片」：`/api/story-long` 收多行 `prompts`，第一段 t2v、后续段 i2v 用上一段尾帧接续。
 - 指定头尾帧（**仅 H3**）：`MiniMaxH3ImageToVideo` 节点有可选 `first_frame`/`last_frame`（都是 IMAGE）。前端 i2v 加「尾帧」上传框（仅 H3 显示），`_build_h3_workflow` 动态加 `LoadImage`(node 13)+`last_frame`。**Wan 不支持尾帧**。
+
+## AI 辅助剧情接续（`ai.py`）
+
+- 本地视觉：Ollama `qwen2.5vl:7b`（`/api/generate` 收 base64 图 + `images` 字段），`ai.describe_image()` 看图说一句话中文。
+- 云端文本：DeepSeek 写叙事（key 同 `storyboard.py`，在 `local_config.py`）。
+- 两个应用（都是「尽力而为」，失败回退原提示词，不拖垮主流程）：
+  - **指定头尾帧**（`_run_task`）：先 `describe_image` 首尾两帧 → `transition_prompt` 写过渡提示词 → 再生成。
+  - **故事模式连续成片**（`_run_long_task` 的 `bridge=True`）：每段完成后 `describe_image` 实际尾帧 → `bridge_next_prompt` 重写下一段提示词。
 
 ## 关键踩坑（非显而易见，改代码前必读）
 
