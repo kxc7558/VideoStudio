@@ -12,6 +12,7 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import ai
 import comfy
 import storyboard
 
@@ -194,11 +195,20 @@ def _cancelled(task_id: str) -> bool:
     return bool(tasks.get(task_id, {}).get("cancelled"))
 
 
-def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, length, steps, last_image_name=None):
+def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, length, steps, last_image_name=None, first_local_path=None, last_local_path=None):
     try:
         if _cancelled(task_id):
             return
         _update(task_id, state="running", msg="正在生成，请稍候…")
+        # 指定首尾帧：先让本地视觉模型看首尾两帧，再由 DeepSeek 写过渡提示词（尽力而为，失败用原提示词）
+        if last_image_name and first_local_path and last_local_path:
+            _update(task_id, msg="正在分析首尾帧，编写过渡提示词…")
+            first_desc = ai.describe_image(first_local_path)
+            last_desc = ai.describe_image(last_local_path)
+            if first_desc and last_desc:
+                t = ai.transition_prompt(first_desc, last_desc, prompt)
+                if t:
+                    prompt = t
         wf = _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps, last_image_name)
         prompt_id = comfy.submit(wf)
         if _cancelled(task_id):
@@ -224,8 +234,12 @@ def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, len
         _update(task_id, state="error", msg=f"出错：{e}")
 
 
-def _run_long_task(task_id, model, segments, width, height, length, steps, seed):
-    """长视频：按 segments 逐段生成，段间「尾帧→下一段首帧」接续，最后拼接成一条。"""
+def _run_long_task(task_id, model, segments, width, height, length, steps, seed, bridge=False):
+    """长视频：按 segments 逐段生成，段间「尾帧→下一段首帧」接续，最后拼接成一条。
+
+    bridge=True 时（故事模式），每段完成后用本地视觉模型回看实际尾帧，再由 DeepSeek
+    重写下一段提示词，让剧情踩在真实画面上发展、不漂移。
+    """
     seg_videos = []
     try:
         for i, seg in enumerate(segments):
@@ -259,6 +273,14 @@ def _run_long_task(task_id, model, segments, width, height, length, steps, seed)
                 extract_last_frame(seg_dest, frame_png)
                 segments[i + 1]["mode"] = "i2v"
                 segments[i + 1]["image"] = comfy.upload_image(frame_png)
+                # 尾帧回看：看实际结尾 → 重写下一段提示词（尽力而为，失败沿用原提示词）
+                if bridge:
+                    _update(task_id, msg=f"第 {i + 1}/{len(segments)} 段完成，正在分析结尾画面、接续下一段…")
+                    prev_desc = ai.describe_image(frame_png)
+                    if prev_desc:
+                        bridged = ai.bridge_next_prompt(prev_desc, segments[i + 1]["prompt"])
+                        if bridged:
+                            segments[i + 1]["prompt"] = bridged
         # 拼接所有段成一条长视频
         dest = OUTPUT / f"{task_id}.mp4"
         concat_videos(seg_videos, dest)
@@ -340,17 +362,19 @@ async def generate(
     task_id = uuid.uuid4().hex[:12]
 
     image_name = None
+    first_local = None
     if image is not None:
         raw = await image.read()
         ext = Path(image.filename or "x.png").suffix.lower() or ".png"
         if ext not in (".png", ".jpg", ".jpeg", ".webp"):
             return JSONResponse({"error": "请上传 png / jpg / webp 图片"}, 400)
-        local = UPLOADS / f"{task_id}{ext}"
-        local.write_bytes(raw)
-        image_name = comfy.upload_image(local)
+        first_local = UPLOADS / f"{task_id}{ext}"
+        first_local.write_bytes(raw)
+        image_name = comfy.upload_image(first_local)
 
     # 尾帧（可选）：指定结束画面，H3 FL2VA 会生成「首帧→尾帧」的过渡。仅 H3 支持。
     last_image_name = None
+    last_local = None
     if last_image is not None:
         if model != "h3":
             return JSONResponse({"error": "指定尾帧目前只有 MiniMax H3 支持，请把模型切到 MiniMax H3"}, 400)
@@ -360,9 +384,9 @@ async def generate(
         ext = Path(last_image.filename or "x.png").suffix.lower() or ".png"
         if ext not in (".png", ".jpg", ".jpeg", ".webp"):
             return JSONResponse({"error": "尾帧请上传 png / jpg / webp 图片"}, 400)
-        local = UPLOADS / f"{task_id}_last{ext}"
-        local.write_bytes(raw)
-        last_image_name = comfy.upload_image(local)
+        last_local = UPLOADS / f"{task_id}_last{ext}"
+        last_local.write_bytes(raw)
+        last_image_name = comfy.upload_image(last_local)
 
     if mode == "i2v" and not image_name:
         return JSONResponse({"error": "图生视频需要先上传一张图片"}, 400)
@@ -392,7 +416,8 @@ async def generate(
     else:
         threading.Thread(
             target=_run_task,
-            args=(task_id, model, mode, image_name, prompt, seed, width, height, length, steps, last_image_name),
+            args=(task_id, model, mode, image_name, prompt, seed, width, height, length, steps,
+                  last_image_name, first_local, last_local),
             daemon=True,
         ).start()
     return {"task_id": task_id, "seed": seed}
@@ -457,7 +482,7 @@ async def story_long(
     )
     threading.Thread(
         target=_run_long_task,
-        args=(task_id, model, segs, width, height, length, steps, seed),
+        args=(task_id, model, segs, width, height, length, steps, seed, True),
         daemon=True,
     ).start()
     return {"task_id": task_id, "seed": seed}
