@@ -24,7 +24,7 @@ goto wait_comfy
 echo [OK] 生成引擎已就绪
 
 rem ---------- 第 2 步：出片台后端（端口 8000）----------
-curl -s -o nul -m 3 http://127.0.0.1:8000/api/health
+curl -s -o nul -m 3 http://127.0.0.1:8000/
 if not errorlevel 1 goto client_ok
 echo [2/2] 正在启动出片台...
 start "出片台-后端" cmd /c "cd /d D:\VideoStudio && venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000"
@@ -32,7 +32,7 @@ start "出片台-后端" cmd /c "cd /d D:\VideoStudio && venv\Scripts\python.exe -m u
 set /a n=0
 :wait_client
 timeout /t 2 /nobreak >nul
-curl -s -o nul -m 3 http://127.0.0.1:8000/api/health
+curl -s -o nul -m 3 http://127.0.0.1:8000/
 if not errorlevel 1 goto client_ok
 set /a n+=1
 if %n% geq 30 goto client_fail
