@@ -117,6 +117,7 @@ def _meta_dict(task_id: str, t: dict) -> dict:
         "mode": t.get("mode", ""),
         "model": t.get("model", ""),
         "prompt": t.get("prompt", ""),
+        "ai_prompts": t.get("ai_prompts", []),
         "resolution": t.get("resolution", ""),
         "duration": t.get("duration", ""),
         "steps": t.get("steps"),
@@ -208,6 +209,7 @@ def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, len
             if first_desc and last_desc:
                 t = ai.transition_prompt(first_desc, last_desc, prompt)
                 if t:
+                    _update(task_id, ai_prompts=[{"segment": 1, "original": prompt, "rewritten": t}])
                     prompt = t
         wf = _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps, last_image_name)
         prompt_id = comfy.submit(wf)
@@ -241,6 +243,7 @@ def _run_long_task(task_id, model, segments, width, height, length, steps, seed,
     重写下一段提示词，让剧情踩在真实画面上发展、不漂移。
     """
     seg_videos = []
+    ai_prompts = []
     try:
         for i, seg in enumerate(segments):
             if _cancelled(task_id):
@@ -278,9 +281,14 @@ def _run_long_task(task_id, model, segments, width, height, length, steps, seed,
                     _update(task_id, msg=f"第 {i + 1}/{len(segments)} 段完成，正在分析结尾画面、接续下一段…")
                     prev_desc = ai.describe_image(frame_png)
                     if prev_desc:
-                        bridged = ai.bridge_next_prompt(prev_desc, segments[i + 1]["prompt"])
+                        original = segments[i + 1]["prompt"]
+                        bridged = ai.bridge_next_prompt(prev_desc, original)
                         if bridged:
                             segments[i + 1]["prompt"] = bridged
+                            ai_prompts.append({"segment": i + 2, "original": original, "rewritten": bridged})
+                            _update(task_id, ai_prompts=ai_prompts)
+                # 尾帧只是段间临时素材，用完删掉，避免 output 里越攒越多
+                frame_png.unlink(missing_ok=True)
         # 拼接所有段成一条长视频
         dest = OUTPUT / f"{task_id}.mp4"
         concat_videos(seg_videos, dest)

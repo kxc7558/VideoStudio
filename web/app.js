@@ -218,6 +218,13 @@ function taskCard(taskId, info) {
   const prompt = String(info.prompt || '').trim();
   const promptHtml = prompt ? `<div class="task-prompt">${esc(prompt.slice(0, 40))}${prompt.length > 40 ? '…' : ''}</div>` : '';
 
+  const aiPrompts = Array.isArray(info.ai_prompts) && info.ai_prompts.length
+    ? `<div class="task-ai">${info.ai_prompts.map(p =>
+        `<div class="task-ai-item">🤖 第 ${esc(String(p.segment))} 段提示词已被 AI 重写：<br>` +
+        `<span class="task-ai-orig">原：${esc(p.original || '')}</span><br>` +
+        `<span class="task-ai-rewritten">新：${esc(p.rewritten || '')}</span></div>`
+      ).join('')}</div>` : '';
+
   let body;
   if (done) {
     if (info.expanded) {
@@ -247,6 +254,7 @@ function taskCard(taskId, info) {
     </div>
     ${metaHtml}
     ${promptHtml}
+    ${aiPrompts}
     ${body}
   </div>`;
 }
@@ -324,6 +332,7 @@ async function pollTasks() {
       info.progress = t.progress || 0;
       info.queueState = t.queue_state || '';
       info.queuePos = t.queue_pos || 0;
+      if (t.ai_prompts) info.ai_prompts = t.ai_prompts;
       if (t.state === 'done') {
         if (info.shotIdx != null) onShotDone(info.shotIdx, taskId);
       } else if (t.state === 'error') {
@@ -522,6 +531,7 @@ async function loadTasks() {
       if (!activeTasks.has(t.task_id)) {
         activeTasks.set(t.task_id, {
           mode: t.mode, model: t.model, prompt: t.prompt,
+          ai_prompts: t.ai_prompts,
           resolution: t.resolution, duration: t.duration, steps: t.steps, seed: t.seed,
           state: t.state, msg: t.msg, video: t.video,
           progress: t.state === 'done' ? 100 : 0,
