@@ -4,6 +4,7 @@ import json
 import random
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -18,6 +19,8 @@ BASE = Path(__file__).parent
 WORKFLOWS = BASE / "workflows"
 OUTPUT = BASE / "output"
 UPLOADS = BASE / "uploads"
+OUTPUT.mkdir(exist_ok=True)
+UPLOADS.mkdir(exist_ok=True)
 
 app = FastAPI(title="出片台")
 app.mount("/web", StaticFiles(directory=BASE / "web"), name="web")
@@ -27,6 +30,25 @@ comfy.start_progress_listener()
 
 tasks = {}
 _lock = threading.Lock()
+
+
+def _reconcile_stale_tasks():
+    """重启后把上次遗留的 queued/running 任务标记为中断（避免一直显示「进行中」）。"""
+    for f in OUTPUT.glob("*.json"):
+        try:
+            meta = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if meta.get("state") in ("queued", "running"):
+            meta["state"] = "error"
+            meta["msg"] = "上次运行被重启打断"
+            try:
+                f.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+
+
+_reconcile_stale_tasks()
 
 # 分辨率预设（中文标签 -> (宽, 高)）
 RESOLUTIONS = {
@@ -77,9 +99,42 @@ def concat_videos(paths: list, out: Path) -> Path:
     return out
 
 
+def _meta_dict(task_id: str, t: dict) -> dict:
+    """把内存任务转成要落盘的档案。"""
+    return {
+        "task_id": task_id,
+        "mode": t.get("mode", ""),
+        "model": t.get("model", ""),
+        "prompt": t.get("prompt", ""),
+        "resolution": t.get("resolution", ""),
+        "duration": t.get("duration", ""),
+        "steps": t.get("steps"),
+        "seed": t.get("seed"),
+        "state": t.get("state", ""),
+        "msg": t.get("msg", ""),
+        "video": t.get("video", ""),
+        "created": t.get("created", 0),
+        "updated": t.get("updated", 0),
+    }
+
+
+def _write_meta(task_id: str, t: dict):
+    """把任务档案写到磁盘（重启不丢）；失败不抛出，避免拖垮生成流程。"""
+    try:
+        OUTPUT.mkdir(exist_ok=True)
+        (OUTPUT / f"{task_id}.json").write_text(
+            json.dumps(_meta_dict(task_id, t), ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 def _update(task_id: str, **kw):
     with _lock:
-        tasks.setdefault(task_id, {}).update(kw)
+        t = tasks.setdefault(task_id, {})
+        t.update(kw)
+        t["updated"] = int(time.time())
+        _write_meta(task_id, t)
 
 
 def _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps):
@@ -168,17 +223,23 @@ def health():
 
 @app.get("/api/tasks")
 def list_tasks():
-    """列出所有任务：进行中的（内存）+ 已完成的（磁盘，重启不丢）。"""
-    active = [
-        {"task_id": tid, "state": t.get("state"), "msg": t.get("msg"), "mode": t.get("mode")}
-        for tid, t in tasks.items()
-        if t.get("state") in ("queued", "running")
-    ]
-    done = []
-    for f in OUTPUT.glob("*.mp4"):
-        done.append({"task_id": f.stem, "state": "done", "video": f.name, "mtime": int(f.stat().st_mtime)})
-    done.sort(key=lambda x: x["mtime"], reverse=True)
-    return {"active": active, "done": done}
+    """列出所有任务：从磁盘档案读（重启不丢），合并内存里进行中的最新状态。"""
+    result = {}
+    for f in OUTPUT.glob("*.json"):
+        try:
+            meta = json.loads(f.read_text(encoding="utf-8"))
+            if meta.get("task_id"):
+                result[meta["task_id"]] = meta
+        except Exception:
+            continue
+    with _lock:
+        for tid, t in tasks.items():
+            result[tid] = _meta_dict(tid, t)
+    items = list(result.values())
+    # 进行中的排最前，其余按更新时间倒序（新在前）
+    items.sort(key=lambda x: (0 if x.get("state") in ("queued", "running") else 1,
+                              -(x.get("updated") or 0)))
+    return {"tasks": items}
 
 
 @app.post("/api/generate")
@@ -231,7 +292,13 @@ async def generate(
     if not prompt.strip():
         prompt = DEFAULT_PROMPT[mode]
 
-    _update(task_id, state="queued", msg="排队中…", mode=mode, model=model, seed=seed, steps=steps)
+    _update(
+        task_id,
+        state="queued", msg="排队中…",
+        mode=mode, model=model, seed=seed, steps=steps,
+        prompt=prompt, resolution=resolution, duration=duration,
+        created=int(time.time()),
+    )
     threading.Thread(
         target=_run_task,
         args=(task_id, model, mode, image_name, prompt, seed, width, height, length, steps),
@@ -264,7 +331,8 @@ async def concat(task_ids: str = Form(...)):
         concat_videos(paths, out)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": f"拼接失败：{e}"}, 500)
-    _update(out_id, state="done", msg="拼接完成", video=out.name, mode="concat")
+    _update(out_id, state="done", msg="拼接完成", video=out.name, mode="concat",
+            created=int(time.time()))
     return {"task_id": out_id}
 
 

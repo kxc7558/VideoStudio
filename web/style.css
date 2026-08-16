@@ -105,3 +105,15 @@ select { width: 100%; padding: 12px; background: var(--panel); border: 1px solid
 /* 进度条 */
 .bar { width: 100%; height: 10px; background: var(--border); border-radius: 6px; overflow: hidden; }
 .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 6px; transition: width .4s; }
+
+/* 任务队列抽屉分组 */
+.task-group { margin-bottom: 6px; }
+.group-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; -webkit-user-select: none; user-select: none; }
+.group-head:hover { border-color: var(--accent); }
+.group-caret { color: var(--muted); width: 14px; }
+.group-title { font-size: 15px; font-weight: 600; }
+.group-count { margin-left: auto; background: var(--border); color: var(--muted); font-size: 12px; padding: 2px 10px; border-radius: 20px; }
+.group-body { padding: 8px 0 4px; }
+.task-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.task-meta span { font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); padding: 2px 8px; border-radius: 6px; }
+.task-prompt { font-size: 13px; color: var(--muted); margin-bottom: 8px; word-break: break-all; }

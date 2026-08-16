@@ -81,8 +81,13 @@ async function submitTask(formData, meta = {}) {
     activeTasks.set(task_id, {
       mode: meta.mode || formData.get('mode'),
       model: formData.get('model') || 'wan',
+      prompt: formData.get('prompt') || '',
+      resolution: formData.get('resolution') || '',
+      duration: formData.get('duration') || '',
+      steps: formData.get('steps') || '',
       shotIdx: meta.shotIdx ?? null,
       state: 'queued', msg: '提交中…', progress: 0, queueState: '', queuePos: 0,
+      created: Math.floor(Date.now() / 1000),
     });
     renderTasks();
     return task_id;
@@ -150,54 +155,112 @@ function statusText(info) {
   return '📤 提交中…';
 }
 
+function fmtTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+const groupExpanded = { active: true, done: false, ended: false };
+
+function toggleGroup(key) {
+  groupExpanded[key] = !groupExpanded[key];
+  renderTasks();
+}
+
+function taskCard(taskId, info) {
+  const modeLabel = info.mode === 'i2v' ? '🖼️ 图生'
+    : info.mode === 't2v' ? '✍️ 文生'
+    : info.mode === 'concat' ? '🎬 拼接' : '🎞️ 历史';
+  const modelName = info.model === 'h3' ? 'MiniMax H3' : info.model === 'wan' ? 'Wan 2.2' : '';
+  const done = info.state === 'done';
+  const err = info.state === 'error';
+  const cancelled = info.state === 'cancelled';
+  const active = info.state === 'queued' || info.state === 'running';
+  const prog = Math.max(0, Math.min(100, Number(info.progress) || 0));
+
+  // 信息条：分辨率 / 时长 / 步数 / 时间
+  const chips = [];
+  if (info.resolution) chips.push(esc(info.resolution));
+  if (info.duration) chips.push(esc(info.duration));
+  if (active && info.steps) chips.push(esc(String(info.steps)) + ' 步');
+  const ts = info.created || info.updated;
+  if (ts) chips.push(fmtTime(ts));
+  const metaHtml = chips.length ? `<div class="task-meta">${chips.map(c => `<span>${c}</span>`).join('')}</div>` : '';
+
+  const prompt = String(info.prompt || '').trim();
+  const promptHtml = prompt ? `<div class="task-prompt">${esc(prompt.slice(0, 40))}${prompt.length > 40 ? '…' : ''}</div>` : '';
+
+  let body;
+  if (done) {
+    if (info.expanded) {
+      body = `<video class="task-video" src="/api/video/${taskId}" controls></video>
+              <a class="task-dl" href="/api/video/${taskId}" download="${taskId}.mp4">⬇️ 下载</a>`;
+    } else {
+      body = `<div class="task-row">
+                <button class="task-preview" onclick="togglePreview('${taskId}')">▶ 预览</button>
+                <a class="task-dl" href="/api/video/${taskId}" download="${taskId}.mp4">⬇️ 下载</a>
+              </div>`;
+    }
+  } else if (err || cancelled) {
+    body = `<div class="task-msg">${esc(info.msg || (cancelled ? '已取消' : '未知错误'))}</div>`;
+  } else {
+    body = `<div class="bar"><div class="bar-fill" style="width:${prog}%"></div></div>`;
+  }
+
+  const cancelBtn = active ? `<button class="task-cancel" onclick="cancelTask('${taskId}')">✕ 取消</button>` : '';
+  return `<div class="task-card">
+    <div class="task-head">
+      <span class="task-mode">${modeLabel}${modelName ? ' · ' + modelName : ''}</span>
+      <span class="task-id">${taskId}</span>
+      <span class="task-status ${done ? 'ok' : (err ? 'bad' : '')}">${statusText(info)}</span>
+      ${cancelBtn}
+    </div>
+    ${metaHtml}
+    ${promptHtml}
+    ${body}
+  </div>`;
+}
+
 function renderTasks() {
   const list = $('task-list');
   if (!activeTasks.size) {
     list.innerHTML = '<div class="task-empty">还没有任务。点上面的「✨ 生成视频」直接排队，或「➕ 加入清单」攒几条一起开始。</div>';
     return;
   }
-  const entries = [...activeTasks.entries()].reverse(); // 最新在前
+  const groups = { active: [], done: [], ended: [] };
+  for (const [taskId, info] of activeTasks) {
+    if (info.state === 'done') groups.done.push([taskId, info]);
+    else if (info.state === 'error' || info.state === 'cancelled') groups.ended.push([taskId, info]);
+    else groups.active.push([taskId, info]);
+  }
+  groups.done.reverse();   // 已完成：新的在前
+  groups.ended.reverse();  // 已取消/失败：新的在前
+
+  const meta = {
+    active: { title: '⚡ 进行中' },
+    done: { title: '✅ 已完成' },
+    ended: { title: '🚫 已取消 / 失败' },
+  };
   list.innerHTML = '';
-  entries.forEach(([taskId, info]) => {
-    const card = document.createElement('div');
-    card.className = 'task-card';
-    const modeLabel = info.mode === 'i2v' ? '🖼️ 图生'
-      : info.mode === 't2v' ? '✍️ 文生'
-      : info.mode === 'concat' ? '🎬 拼接' : '🎞️ 历史';
-    const modelName = info.model === 'h3' ? 'MiniMax H3' : 'Wan 2.2';
-    const done = info.state === 'done';
-    const err = info.state === 'error';
-    const cancelled = info.state === 'cancelled';
-    const active = info.state === 'queued' || info.state === 'running';
-    const prog = Math.max(0, Math.min(100, Number(info.progress) || 0));
-    let body;
-    if (done) {
-      if (info.expanded) {
-        body = `<video class="task-video" src="/api/video/${taskId}" controls></video>
-                <a class="task-dl" href="/api/video/${taskId}" download="${taskId}.mp4">⬇️ 下载</a>`;
-      } else {
-        body = `<div class="task-row">
-                  <button class="task-preview" onclick="togglePreview('${taskId}')">▶ 预览</button>
-                  <a class="task-dl" href="/api/video/${taskId}" download="${taskId}.mp4">⬇️ 下载</a>
-                </div>`;
-      }
-    } else if (err || cancelled) {
-      body = `<div class="task-msg">${esc(info.msg || (cancelled ? '已取消' : '未知错误'))}</div>`;
-    } else {
-      body = `<div class="bar"><div class="bar-fill" style="width:${prog}%"></div></div>`;
-    }
-    const cancelBtn = active
-      ? `<button class="task-cancel" onclick="cancelTask('${taskId}')">✕ 取消</button>` : '';
-    card.innerHTML = `
-      <div class="task-head">
-        <span class="task-mode">${modeLabel} · ${modelName}</span>
-        <span class="task-id">${taskId}</span>
-        <span class="task-status ${done ? 'ok' : (err ? 'bad' : (cancelled ? '' : ''))}">${statusText(info)}</span>
-        ${cancelBtn}
+  for (const key of ['active', 'done', 'ended']) {
+    const items = groups[key];
+    if (!items.length) continue;
+    const open = groupExpanded[key];
+    const g = document.createElement('div');
+    g.className = 'task-group';
+    g.innerHTML = `
+      <div class="group-head" onclick="toggleGroup('${key}')">
+        <span class="group-caret">${open ? '▾' : '▸'}</span>
+        <span class="group-title">${meta[key].title}</span>
+        <span class="group-count">${items.length}</span>
       </div>
-      ${body}`;
-    list.appendChild(card);
-  });
+      <div class="group-body" ${open ? '' : 'hidden'}>
+        ${items.map(([id, info]) => taskCard(id, info)).join('')}
+      </div>`;
+    list.appendChild(g);
+  }
 }
 
 function togglePreview(taskId) {
@@ -392,9 +455,16 @@ async function loadTasks() {
   try {
     const r = await fetch('/api/tasks');
     const data = await r.json();
-    (data.done || []).forEach(t => {
+    (data.tasks || []).forEach(t => {
       if (!activeTasks.has(t.task_id)) {
-        activeTasks.set(t.task_id, { mode: 'done', state: 'done', progress: 100, queueState: 'done', msg: '完成' });
+        activeTasks.set(t.task_id, {
+          mode: t.mode, model: t.model, prompt: t.prompt,
+          resolution: t.resolution, duration: t.duration, steps: t.steps, seed: t.seed,
+          state: t.state, msg: t.msg, video: t.video,
+          progress: t.state === 'done' ? 100 : 0,
+          queueState: t.state, queuePos: 0,
+          created: t.created, updated: t.updated,
+        });
       }
     });
     renderTasks();
