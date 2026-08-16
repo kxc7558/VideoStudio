@@ -1,0 +1,2 @@
+# run.bat 是 GBK + CRLF 编码，git 的换行转换会破坏它，按二进制原样保存
+*.bat -text
