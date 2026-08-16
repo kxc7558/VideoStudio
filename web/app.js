@@ -1,5 +1,6 @@
 let mode = 'i2v';
 let imageFile = null;
+let lastImageFile = null;   // 尾帧（可选，仅 H3 支持首尾帧过渡）
 let shots = [];            // 故事模式分镜列表
 let pendingQueue = [];     // 待生成清单（方式 B）
 let activeTasks = new Map(); // taskId -> {mode, shotIdx, state, progress, queueState, queuePos, msg}
@@ -43,6 +44,26 @@ function handleFile(f) {
   $('drop-hint').hidden = true;
 }
 
+// ===== 尾帧（可选，H3 首尾帧过渡） =====
+const lastZone = $('lastframe-zone');
+const lastInput = $('last-image-input');
+lastZone.addEventListener('click', () => lastInput.click());
+lastZone.addEventListener('dragover', e => { e.preventDefault(); lastZone.classList.add('over'); });
+lastZone.addEventListener('dragleave', () => lastZone.classList.remove('over'));
+lastZone.addEventListener('drop', e => {
+  e.preventDefault();
+  lastZone.classList.remove('over');
+  if (e.dataTransfer.files.length) handleLastFile(e.dataTransfer.files[0]);
+});
+lastInput.addEventListener('change', () => { if (lastInput.files.length) handleLastFile(lastInput.files[0]); });
+
+function handleLastFile(f) {
+  lastImageFile = f;
+  $('last-preview').src = URL.createObjectURL(f);
+  $('last-preview').hidden = false;
+  $('last-drop-hint').hidden = true;
+}
+
 // ===== 提交工具 =====
 async function submitGenerate(formData) {
   const r = await fetch('/api/generate', { method: 'POST', body: formData });
@@ -61,6 +82,7 @@ function currentConfig() {
     steps: $('steps').value,
     segments: $('segments').value,
     image: imageFile,
+    lastImage: lastImageFile,
   };
 }
 
@@ -74,6 +96,7 @@ function buildForm(cfg) {
   fd.append('steps', cfg.steps || '20');
   fd.append('segments', cfg.segments || '1');
   if (cfg.mode === 'i2v' && cfg.image) fd.append('image', cfg.image);
+  if (cfg.mode === 'i2v' && cfg.lastImage) fd.append('last_image', cfg.lastImage);
   return fd;
 }
 
@@ -516,6 +539,13 @@ $('generate-btn').addEventListener('click', generate);
 $('add-queue-btn').addEventListener('click', addToQueue);
 $('start-all-btn').addEventListener('click', startAll);
 $('clear-queue-btn').addEventListener('click', clearQueue);
+
+// 尾帧入口只有 MiniMax H3 支持，切到 Wan 时隐藏
+function syncLastFrameZone() {
+  $('lastframe-zone').hidden = $('model').value !== 'h3';
+}
+$('model').addEventListener('change', syncLastFrameZone);
+syncLastFrameZone();
 
 checkHealth();
 loadTasks();

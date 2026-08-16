@@ -30,6 +30,11 @@
         <img id="preview" alt="预览" hidden>
         <div id="drop-hint">点击或拖入一张图片<br><small>这就是视频的第一帧</small></div>
       </div>
+      <div id="lastframe-zone" class="dropzone lastframe" hidden>
+        <input type="file" id="last-image-input" accept="image/*" hidden>
+        <img id="last-preview" alt="尾帧预览" hidden>
+        <div id="last-drop-hint">🎯 可选：点这里或拖入一张「结尾画面」<br><small>MiniMax H3 会生成从首帧过渡到这张结尾画面的视频</small></div>
+      </div>
       <label>想让画面怎么动？（可留空）</label>
       <textarea id="i2v-prompt" rows="3" placeholder="例如：镜头缓慢推进，人物转头微笑…"></textarea>
     </section>

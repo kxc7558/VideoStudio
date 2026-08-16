@@ -32,6 +32,8 @@ main { max-width: 860px; margin: 0 auto; }
 .dropzone { border: 2px dashed var(--border); border-radius: 14px; padding: 40px; text-align: center; cursor: pointer; color: var(--muted); transition: .2s; }
 .dropzone.over { border-color: var(--accent); background: #1a1e2a; }
 .dropzone img { max-height: 280px; border-radius: 10px; }
+.dropzone.lastframe { padding: 16px; margin-top: 10px; border-style: dashed; border-color: #4a5060; }
+.dropzone.lastframe img { max-height: 140px; }
 label { display: block; margin: 16px 0 8px; font-size: 14px; color: var(--muted); }
 textarea { width: 100%; padding: 14px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 12px; font-size: 15px; resize: vertical; font-family: inherit; }
 textarea:focus, select:focus { outline: none; border-color: var(--accent); }

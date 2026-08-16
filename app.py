@@ -169,8 +169,8 @@ def _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, t
     return wf
 
 
-def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps):
-    """MiniMax H3 工作流：单模型（FL2VA）同时支持 t2v 与 i2v（首帧）。"""
+def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name=None):
+    """MiniMax H3 工作流：单模型（FL2VA）同时支持 t2v 与 i2v（首帧）；可选指定尾帧做「首尾帧过渡」。"""
     wf = json.loads((WORKFLOWS / f"h3_{mode}_api.json").read_text(encoding="utf-8"))
     wf["4"]["inputs"].update({"prompt": prompt, "width": width, "height": height, "length": length})
     wf["5"]["inputs"]["noise_seed"] = seed
@@ -178,12 +178,15 @@ def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, ta
     wf["12"]["inputs"]["filename_prefix"] = f"video/{task_id}"
     if mode == "i2v":
         wf["0"]["inputs"]["image"] = image_name
+        if last_frame_name:
+            wf["13"] = {"class_type": "LoadImage", "inputs": {"image": last_frame_name}}
+            wf["4"]["inputs"]["last_frame"] = ["13", 0]
     return wf
 
 
-def _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps=20):
+def _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps=20, last_frame_name=None):
     if model == "h3":
-        return _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps)
+        return _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name)
     return _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps)
 
 
@@ -191,12 +194,12 @@ def _cancelled(task_id: str) -> bool:
     return bool(tasks.get(task_id, {}).get("cancelled"))
 
 
-def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, length, steps):
+def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, length, steps, last_image_name=None):
     try:
         if _cancelled(task_id):
             return
         _update(task_id, state="running", msg="正在生成，请稍候…")
-        wf = _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps)
+        wf = _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps, last_image_name)
         prompt_id = comfy.submit(wf)
         if _cancelled(task_id):
             comfy.cancel(prompt_id)
@@ -310,6 +313,7 @@ async def generate(
     steps: int = Form(20),
     segments: int = Form(1),
     image: UploadFile = File(None),
+    last_image: UploadFile = File(None),
 ):
     if not comfy.is_ready():
         return JSONResponse({"error": "生成引擎（ComfyUI）未启动，请先启动它"}, 503)
@@ -345,6 +349,21 @@ async def generate(
         local.write_bytes(raw)
         image_name = comfy.upload_image(local)
 
+    # 尾帧（可选）：指定结束画面，H3 FL2VA 会生成「首帧→尾帧」的过渡。仅 H3 支持。
+    last_image_name = None
+    if last_image is not None:
+        if model != "h3":
+            return JSONResponse({"error": "指定尾帧目前只有 MiniMax H3 支持，请把模型切到 MiniMax H3"}, 400)
+        if mode != "i2v":
+            return JSONResponse({"error": "指定尾帧需要同时上传首帧（图生视频模式）"}, 400)
+        raw = await last_image.read()
+        ext = Path(last_image.filename or "x.png").suffix.lower() or ".png"
+        if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+            return JSONResponse({"error": "尾帧请上传 png / jpg / webp 图片"}, 400)
+        local = UPLOADS / f"{task_id}_last{ext}"
+        local.write_bytes(raw)
+        last_image_name = comfy.upload_image(local)
+
     if mode == "i2v" and not image_name:
         return JSONResponse({"error": "图生视频需要先上传一张图片"}, 400)
     if not prompt.strip():
@@ -358,6 +377,8 @@ async def generate(
         created=int(time.time()),
     )
     segments = max(1, min(int(segments), 6))
+    if last_image_name:
+        segments = 1  # 指定尾帧是「单条首尾帧过渡」，不参与多段接续
     if segments > 1:
         # 长视频：第一段按 mode，后续段「尾帧→下一段首帧」接续（i2v）
         segs = [{"mode": mode, "image": image_name, "prompt": prompt}]
@@ -371,7 +392,7 @@ async def generate(
     else:
         threading.Thread(
             target=_run_task,
-            args=(task_id, model, mode, image_name, prompt, seed, width, height, length, steps),
+            args=(task_id, model, mode, image_name, prompt, seed, width, height, length, steps, last_image_name),
             daemon=True,
         ).start()
     return {"task_id": task_id, "seed": seed}
