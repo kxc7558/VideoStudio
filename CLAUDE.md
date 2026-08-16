@@ -42,6 +42,7 @@
 - 两个应用（都是「尽力而为」，失败回退原提示词，不拖垮主流程）：
   - **指定头尾帧**（`_run_task`）：先 `describe_image` 首尾两帧 → `transition_prompt` 写过渡提示词 → 再生成。
   - **故事模式连续成片**（`_run_long_task` 的 `bridge=True`）：每段完成后 `describe_image` 实际尾帧 → `bridge_next_prompt` 重写下一段提示词。
+- 重写的提示词记在任务 `ai_prompts` 字段（落盘 + 任务卡片展示「原/新」对比）；段间尾帧 PNG 用后即删（`frame_png.unlink`）。
 
 ## 关键踩坑（非显而易见，改代码前必读）
 
