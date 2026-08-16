@@ -201,16 +201,24 @@ def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, len
         if _cancelled(task_id):
             return
         _update(task_id, state="running", msg="正在生成，请稍候…")
-        # 指定首尾帧：先让本地视觉模型看首尾两帧，再由 DeepSeek 写过渡提示词（尽力而为，失败用原提示词）
+        seconds = length / 24.0 if model == "h3" else 0.0
+        # 指定首尾帧：先让本地视觉模型看首尾两帧，再由 DeepSeek 写过渡提示词（H3 FL2VA 官方格式，尽力而为）
         if last_image_name and first_local_path and last_local_path:
             _update(task_id, msg="正在分析首尾帧，编写过渡提示词…")
             first_desc = ai.describe_image(first_local_path)
             last_desc = ai.describe_image(last_local_path)
             if first_desc and last_desc:
-                t = ai.transition_prompt(first_desc, last_desc, prompt)
+                t = ai.transition_prompt(first_desc, last_desc, prompt, seconds)
                 if t:
                     _update(task_id, ai_prompts=[{"segment": 1, "original": prompt, "rewritten": t}])
                     prompt = t
+        elif model == "h3":
+            # 单段 H3：把普通提示词按 H3 官方格式改写（尽力而为，失败沿用原提示词）
+            _update(task_id, msg="正在按 MiniMax H3 官方格式改写提示词…")
+            t = ai.h3_prompt(prompt, mode, seconds)
+            if t:
+                _update(task_id, ai_prompts=[{"segment": 1, "original": prompt, "rewritten": t}])
+                prompt = t
         wf = _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps, last_image_name)
         prompt_id = comfy.submit(wf)
         if _cancelled(task_id):
@@ -244,6 +252,15 @@ def _run_long_task(task_id, model, segments, width, height, length, steps, seed,
     """
     seg_videos = []
     ai_prompts = []
+    seconds = length / 24.0 if model == "h3" else 0.0
+    # H3 官方格式：第一段（首镜头）先改写成官方格式；后续段在 bridge 里改写（尽力而为）
+    if model == "h3" and segments:
+        orig0 = segments[0]["prompt"]
+        t0 = ai.h3_prompt(orig0, segments[0]["mode"], seconds)
+        if t0:
+            segments[0]["prompt"] = t0
+            ai_prompts.append({"segment": 1, "original": orig0, "rewritten": t0})
+            _update(task_id, ai_prompts=ai_prompts)
     try:
         for i, seg in enumerate(segments):
             if _cancelled(task_id):
@@ -280,13 +297,18 @@ def _run_long_task(task_id, model, segments, width, height, length, steps, seed,
                 if bridge:
                     _update(task_id, msg=f"第 {i + 1}/{len(segments)} 段完成，正在分析结尾画面、接续下一段…")
                     prev_desc = ai.describe_image(frame_png)
-                    if prev_desc:
-                        original = segments[i + 1]["prompt"]
-                        bridged = ai.bridge_next_prompt(prev_desc, original)
-                        if bridged:
-                            segments[i + 1]["prompt"] = bridged
-                            ai_prompts.append({"segment": i + 2, "original": original, "rewritten": bridged})
-                            _update(task_id, ai_prompts=ai_prompts)
+                    original = segments[i + 1]["prompt"]
+                    if model == "h3":
+                        # H3：优先「回看尾帧→按官方格式接续」，失败退到纯官方格式改写（都输出官方格式）
+                        bridged = ai.bridge_next_prompt(prev_desc, original, "h3", seconds) if prev_desc else ""
+                        if not bridged:
+                            bridged = ai.h3_prompt(original, "i2v", seconds)
+                    else:
+                        bridged = ai.bridge_next_prompt(prev_desc, original) if prev_desc else ""
+                    if bridged:
+                        segments[i + 1]["prompt"] = bridged
+                        ai_prompts.append({"segment": i + 2, "original": original, "rewritten": bridged})
+                        _update(task_id, ai_prompts=ai_prompts)
                 # 尾帧只是段间临时素材，用完删掉，避免 output 里越攒越多
                 frame_png.unlink(missing_ok=True)
         # 拼接所有段成一条长视频

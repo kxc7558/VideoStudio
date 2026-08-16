@@ -43,6 +43,7 @@
   - **指定头尾帧**（`_run_task`）：先 `describe_image` 首尾两帧 → `transition_prompt` 写过渡提示词 → 再生成。
   - **故事模式连续成片**（`_run_long_task` 的 `bridge=True`）：每段完成后 `describe_image` 实际尾帧 → `bridge_next_prompt` 重写下一段提示词。
 - 重写的提示词记在任务 `ai_prompts` 字段（落盘 + 任务卡片展示「原/新」对比）；段间尾帧 PNG 用后即删（`frame_png.unlink`）。
+- **H3 官方提示词格式**（`ai._H3_RULES` + `ai.h3_prompt`）：H3 生成前把普通提示词按官方配方改写——`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music` 三段，i2v/fl2v 带首尾帧对齐指令。**仅 H3 生效**，Wan 保持简短英文；UI 仍显示简短提示词，改写发生在后台生成时（尽力而为，失败回退原提示词）。
 
 ## 关键踩坑（非显而易见，改代码前必读）
 
