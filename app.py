@@ -99,6 +99,16 @@ def concat_videos(paths: list, out: Path) -> Path:
     return out
 
 
+def extract_last_frame(video_path: Path, out_png: Path) -> Path:
+    """用 ffmpeg 抽视频最后一帧存成 png，供下一段当首帧（首尾帧接续）。"""
+    subprocess.run(
+        [FFMPEG, "-y", "-sseof", "-0.2", "-i", str(video_path),
+         "-frames:v", "1", str(out_png)],
+        capture_output=True, timeout=300,
+    )
+    return out_png
+
+
 def _meta_dict(task_id: str, t: dict) -> dict:
     """把内存任务转成要落盘的档案。"""
     return {
@@ -211,6 +221,53 @@ def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, len
         _update(task_id, state="error", msg=f"出错：{e}")
 
 
+def _run_long_task(task_id, model, segments, width, height, length, steps, seed):
+    """长视频：按 segments 逐段生成，段间「尾帧→下一段首帧」接续，最后拼接成一条。"""
+    seg_videos = []
+    try:
+        for i, seg in enumerate(segments):
+            if _cancelled(task_id):
+                return
+            seg_id = f"{task_id}_s{i}"
+            wf = _build_workflow(model, seg["mode"], seg.get("image"), seg["prompt"],
+                                 seed + i, width, height, length, seg_id, steps)
+            pid = comfy.submit(wf)
+            _update(task_id, state="running", prompt_id=pid,
+                    msg=f"第 {i + 1}/{len(segments)} 段生成中…")
+            if _cancelled(task_id):
+                comfy.cancel(pid)
+                return
+            ok, history = comfy.wait_done(pid, should_cancel=lambda: _cancelled(task_id))
+            if _cancelled(task_id):
+                return
+            if not ok:
+                _update(task_id, state="error", msg=f"第 {i + 1} 段生成失败或超时")
+                return
+            video = comfy.find_video(history)
+            if not video:
+                _update(task_id, state="error", msg=f"第 {i + 1} 段未找到视频")
+                return
+            seg_dest = OUTPUT / f"{seg_id}.mp4"
+            comfy.download_video(video, seg_dest)
+            seg_videos.append(seg_dest)
+            # 抽尾帧，作为下一段首帧（i2v 接续）
+            if i < len(segments) - 1:
+                frame_png = OUTPUT / f"{seg_id}_last.png"
+                extract_last_frame(seg_dest, frame_png)
+                segments[i + 1]["mode"] = "i2v"
+                segments[i + 1]["image"] = comfy.upload_image(frame_png)
+        # 拼接所有段成一条长视频
+        dest = OUTPUT / f"{task_id}.mp4"
+        concat_videos(seg_videos, dest)
+        for v in seg_videos:
+            v.unlink(missing_ok=True)
+        _update(task_id, state="done", msg="完成", video=dest.name)
+    except Exception as e:  # noqa: BLE001
+        if _cancelled(task_id):
+            return
+        _update(task_id, state="error", msg=f"出错：{e}")
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (BASE / "web" / "index.html").read_text(encoding="utf-8")
@@ -251,6 +308,7 @@ async def generate(
     duration: str = Form("长 · 约5秒"),
     seed: int = Form(-1),
     steps: int = Form(20),
+    segments: int = Form(1),
     image: UploadFile = File(None),
 ):
     if not comfy.is_ready():
@@ -299,11 +357,23 @@ async def generate(
         prompt=prompt, resolution=resolution, duration=duration,
         created=int(time.time()),
     )
-    threading.Thread(
-        target=_run_task,
-        args=(task_id, model, mode, image_name, prompt, seed, width, height, length, steps),
-        daemon=True,
-    ).start()
+    segments = max(1, min(int(segments), 6))
+    if segments > 1:
+        # 长视频：第一段按 mode，后续段「尾帧→下一段首帧」接续（i2v）
+        segs = [{"mode": mode, "image": image_name, "prompt": prompt}]
+        for _ in range(segments - 1):
+            segs.append({"mode": "i2v", "image": None, "prompt": prompt})
+        threading.Thread(
+            target=_run_long_task,
+            args=(task_id, model, segs, width, height, length, steps, seed),
+            daemon=True,
+        ).start()
+    else:
+        threading.Thread(
+            target=_run_task,
+            args=(task_id, model, mode, image_name, prompt, seed, width, height, length, steps),
+            daemon=True,
+        ).start()
     return {"task_id": task_id, "seed": seed}
 
 
@@ -316,6 +386,60 @@ async def storyboard_split(story: str = Form(...), n_shots: int = Form(6)):
         return {"shots": shots}
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": f"拆解失败：{e}"}, 500)
+
+
+@app.post("/api/story-long")
+async def story_long(
+    model: str = Form("wan"),
+    prompts: str = Form(""),
+    resolution: str = Form("方屏 1:1"),
+    duration: str = Form("长 · 约5秒"),
+    seed: int = Form(-1),
+    steps: int = Form(20),
+):
+    """故事模式长视频：把若干镜头按「首尾帧」接续，生成一条连续长视频。"""
+    if not comfy.is_ready():
+        return JSONResponse({"error": "生成引擎（ComfyUI）未启动，请先启动它"}, 503)
+    if model not in MODELS:
+        return JSONResponse({"error": "未知模型"}, 400)
+    if model == "h3":
+        if not comfy.h3_ready():
+            return JSONResponse({"error": "MiniMax H3 模型还没就绪"}, 503)
+    elif not comfy.t2v_ready():
+        return JSONResponse({"error": "文生视频模型还在下载中，暂不可用"}, 503)
+
+    shot_prompts = [p.strip() for p in prompts.split("\n") if p.strip()]
+    if len(shot_prompts) < 2:
+        return JSONResponse({"error": "至少需要 2 个镜头才能做连续长视频"}, 400)
+
+    width, height = RESOLUTIONS.get(resolution, (640, 640))
+    length = (DURATIONS_H3 if model == "h3" else DURATIONS).get(duration, 124 if model == "h3" else 81)
+    steps = max(4, min(int(steps), MAX_STEPS))
+    if model == "wan" and steps % 2:
+        steps += 1
+    if seed < 0:
+        seed = random.randint(1, 2**31 - 1)
+
+    task_id = uuid.uuid4().hex[:12]
+    # 第一段 t2v，后续段用上一段尾帧做首帧（i2v）
+    segs = [{"mode": "t2v", "image": None, "prompt": shot_prompts[0]}]
+    for p in shot_prompts[1:]:
+        segs.append({"mode": "i2v", "image": None, "prompt": p})
+
+    _update(
+        task_id,
+        state="queued", msg="排队中…",
+        mode="story", model=model, seed=seed, steps=steps,
+        prompt="、".join(shot_prompts[:3]) + ("…" if len(shot_prompts) > 3 else ""),
+        resolution=resolution, duration=duration,
+        created=int(time.time()),
+    )
+    threading.Thread(
+        target=_run_long_task,
+        args=(task_id, model, segs, width, height, length, steps, seed),
+        daemon=True,
+    ).start()
+    return {"task_id": task_id, "seed": seed}
 
 
 @app.post("/api/concat")

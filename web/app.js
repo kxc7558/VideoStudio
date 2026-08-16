@@ -59,6 +59,7 @@ function currentConfig() {
     resolution: $('resolution').value,
     duration: $('duration').value,
     steps: $('steps').value,
+    segments: $('segments').value,
     image: imageFile,
   };
 }
@@ -71,6 +72,7 @@ function buildForm(cfg) {
   fd.append('resolution', cfg.resolution);
   fd.append('duration', cfg.duration);
   fd.append('steps', cfg.steps || '20');
+  fd.append('segments', cfg.segments || '1');
   if (cfg.mode === 'i2v' && cfg.image) fd.append('image', cfg.image);
   return fd;
 }
@@ -172,6 +174,7 @@ function toggleGroup(key) {
 function taskCard(taskId, info) {
   const modeLabel = info.mode === 'i2v' ? '🖼️ 图生'
     : info.mode === 't2v' ? '✍️ 文生'
+    : info.mode === 'story' ? '📖 故事'
     : info.mode === 'concat' ? '🎬 拼接' : '🎞️ 历史';
   const modelName = info.model === 'h3' ? 'MiniMax H3' : info.model === 'wan' ? 'Wan 2.2' : '';
   const done = info.state === 'done';
@@ -206,7 +209,9 @@ function taskCard(taskId, info) {
   } else if (err || cancelled) {
     body = `<div class="task-msg">${esc(info.msg || (cancelled ? '已取消' : '未知错误'))}</div>`;
   } else {
-    body = `<div class="bar"><div class="bar-fill" style="width:${prog}%"></div></div>`;
+    const runningMsg = String(info.msg || '');
+    const msgHtml = runningMsg ? `<div class="task-msg" style="color:var(--muted)">${esc(runningMsg)}</div>` : '';
+    body = `${msgHtml}<div class="bar"><div class="bar-fill" style="width:${prog}%"></div></div>`;
   }
 
   const cancelBtn = active ? `<button class="task-cancel" onclick="cancelTask('${taskId}')">✕ 取消</button>` : '';
@@ -407,9 +412,12 @@ function updateConcatArea() {
   const locked = shots.filter(s => s.selectedTask).length;
   const allLocked = shots.length > 0 && locked === shots.length;
   $('concat-area').hidden = !allLocked;
+  // 连续成片：只要有 2 个以上镜头就能用（直接用各镜头提示词接续，无需先逐个生成）
+  $('chain-area').hidden = shots.length < 2;
 }
 
 $('concat-btn').addEventListener('click', concatAll);
+$('chain-btn').addEventListener('click', chainStory);
 
 async function concatAll() {
   const ids = shots.map(s => s.selectedTask).filter(Boolean);
@@ -430,6 +438,38 @@ async function concatAll() {
   } finally {
     $('concat-btn').disabled = false;
     $('concat-btn').textContent = '🎬 拼接成片';
+  }
+}
+
+async function chainStory() {
+  const prompts = shots.map(s => (s.prompt || '').trim()).filter(Boolean);
+  if (prompts.length < 2) { alert('至少需要 2 个镜头才能连续成片'); return; }
+  $('chain-btn').disabled = true;
+  $('chain-btn').textContent = '已提交，生成中…';
+  try {
+    const fd = new FormData();
+    fd.append('model', $('model').value);
+    fd.append('prompts', prompts.join('\n'));
+    fd.append('resolution', $('resolution').value);
+    fd.append('duration', $('duration').value);
+    fd.append('steps', $('steps').value);
+    const r = await fetch('/api/story-long', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) { alert(data.error || '连续成片失败'); return; }
+    activeTasks.set(data.task_id, {
+      mode: 'story', model: $('model').value,
+      prompt: prompts.slice(0, 3).join('、') + (prompts.length > 3 ? '…' : ''),
+      resolution: $('resolution').value, duration: $('duration').value, steps: $('steps').value,
+      state: 'queued', msg: '排队中…', progress: 0, queueState: '', queuePos: 0,
+      created: Math.floor(Date.now() / 1000),
+    });
+    renderTasks();
+    $('chain-result').innerHTML = `<div class="task-msg" style="color:var(--muted)">已提交「连续成片」，进度见下方任务队列（ID：${data.task_id}）</div>`;
+  } catch (e) {
+    alert('连续成片失败：' + e);
+  } finally {
+    $('chain-btn').disabled = false;
+    $('chain-btn').textContent = '🎬 连续成片（首尾帧接续，一条长视频）';
   }
 }
 

@@ -52,6 +52,10 @@
         <button id="split-btn" class="generate">📋 拆成剧本</button>
       </div>
       <div id="shot-list"></div>
+      <div id="chain-area" hidden>
+        <button id="chain-btn" class="generate">🎬 连续成片（首尾帧接续，一条长视频）</button>
+        <div id="chain-result"></div>
+      </div>
       <div id="concat-area" hidden>
         <button id="concat-btn" class="generate">🎬 拼接成片</button>
         <div id="story-result"></div>
@@ -89,6 +93,17 @@
           <option value="16">标准 · 16 步</option>
           <option value="20" selected>高质量 · 20 步</option>
           <option value="30">极致 · 30 步</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>连续片段（自动首尾帧接续成一条）</label>
+        <select id="segments">
+          <option value="1" selected>1 段（不接续）</option>
+          <option value="2">2 段</option>
+          <option value="3">3 段</option>
+          <option value="4">4 段</option>
+          <option value="5">5 段</option>
+          <option value="6">6 段</option>
         </select>
       </div>
       <button id="generate-btn" class="generate">✨ 生成视频</button>
