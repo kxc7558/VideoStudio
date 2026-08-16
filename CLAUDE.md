@@ -28,6 +28,12 @@
 - 模型文件在 `E:\ComfyUI_models\`，通过 ComfyUI 的 `extra_model_paths.yaml` 挂载。H3 用 GGUF 量化版 DiT + safetensors 文本编码器（`minimax_h3`）+ video VAE。
 - 详见 memory：`minimax-h3-deployment`、`wan22-i2v-comfyui-deployment`。
 
+## 长视频（首尾帧）
+
+- 自动接续：`/api/generate` 加 `segments`(1~6)，`_run_long_task` 逐段生成，段间「抽尾帧→下一段首帧」接续，最后 `concat_videos` 拼一条。尾帧抽取 `extract_last_frame`（ffmpeg `-sseof -0.2 -frames:v 1`）。
+- 故事模式「连续成片」：`/api/story-long` 收多行 `prompts`，第一段 t2v、后续段 i2v 用上一段尾帧接续。
+- 指定头尾帧（**仅 H3**）：`MiniMaxH3ImageToVideo` 节点有可选 `first_frame`/`last_frame`（都是 IMAGE）。前端 i2v 加「尾帧」上传框（仅 H3 显示），`_build_h3_workflow` 动态加 `LoadImage`(node 13)+`last_frame`。**Wan 不支持尾帧**。
+
 ## 关键踩坑（非显而易见，改代码前必读）
 
 - **SaveVideo 输出在 history 的 `images` 键**（不是 `videos`），带 `animated:[true]`；找视频要同时查 `videos` 和 `images` 两键并按扩展名过滤（`comfy.py:find_video`）。
