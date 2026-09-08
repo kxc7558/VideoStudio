@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>出片台</title>
+  <link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">🎬 出片台</div>
+    <div class="status">
+      <span id="engine-status" class="dot pending">检测引擎…</span>
+      <span id="t2v-status" class="dot pending">检测文生视频…</span>
+      <span id="h3-status" class="dot pending">检测 MiniMax H3…</span>
+      <span id="uncensored-status" class="dot pending" hidden></span>
+    </div>
+  </header>
+
+  <main>
+    <div class="tabs">
+      <button class="tab active" data-mode="i2v">🖼️ 图生视频</button>
+      <button class="tab" data-mode="t2v">✍️ 文生视频</button>
+      <button class="tab" data-mode="story">📖 故事模式</button>
+      <button class="tab" data-mode="nsfw">🔞 无审查</button>
+    </div>
+
+    <section class="creative-studio" aria-label="制片设定">
+      <div class="creative-title">
+        <div><h2>制片设定</h2><p>设定会用于当前生成、分镜拆解和连续成片；每个镜头仍可单独补充。</p></div>
+        <button id="save-profiles-btn" class="again">保存资料库</button>
+      </div>
+      <div class="creative-columns">
+        <div class="creative-column">
+          <div class="creative-head"><h3>场景控制</h3><select id="scene-select"><option value="">不使用场景预设</option></select></div>
+          <div class="profile-fields">
+            <input id="scene-name" placeholder="场景名称，例如：雨夜九龙城">
+            <input id="scene-place" placeholder="地点与空间，例如：狭窄霓虹街巷">
+            <input id="scene-era" placeholder="时代 / 风格，例如：近未来写实电影">
+            <input id="scene-atmosphere" placeholder="时间、天气与氛围，例如：深夜小雨、潮湿薄雾">
+            <input id="scene-lighting" placeholder="光线，例如：蓝紫霓虹侧逆光、地面积水反射">
+            <input id="scene-palette" placeholder="色彩，例如：深青、品红与暖黄点光">
+            <input id="scene-camera" placeholder="镜头语言，例如：慢速跟拍、中近景">
+          </div>
+          <div class="profile-actions"><button id="new-scene-btn" class="again">新建场景</button><button id="delete-scene-btn" class="danger">删除场景</button></div>
+        </div>
+        <div class="creative-column">
+          <div class="creative-head"><h3>人物形象控制</h3><select id="character-select"><option value="">选择人物加入本次制作</option></select></div>
+          <div id="selected-characters" class="selected-characters"></div>
+          <div class="profile-fields">
+            <input id="character-name" placeholder="人物名称，例如：林夏">
+            <input id="character-identity" placeholder="身份 / 年龄感，例如：28岁女记者、冷静敏锐">
+            <input id="character-appearance" placeholder="外貌特征，例如：短黑发、浅褐眼、左眉小痣">
+            <input id="character-wardrobe" placeholder="服装与道具，例如：深灰风衣、旧胶片相机">
+            <input id="character-behavior" placeholder="动作限制，例如：克制动作、慢速转头、避免换装">
+          </div>
+          <p class="reference-note">人物参考图请在“图生视频”中作为首帧上传；文生视频会使用上面的设定词维持一致性。</p>
+          <div class="profile-actions"><button id="new-character-btn" class="again">新建人物</button><button id="delete-character-btn" class="danger">删除人物</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 图生视频 -->
+    <section id="panel-i2v" class="panel">
+      <div id="dropzone" class="dropzone">
+        <input type="file" id="image-input" accept="image/*" hidden>
+        <img id="preview" alt="预览" hidden>
+        <div id="drop-hint">点击或拖入一张图片<br><small>这就是视频的第一帧</small></div>
+      </div>
+      <div id="lastframe-zone" class="dropzone lastframe" hidden>
+        <input type="file" id="last-image-input" accept="image/*" hidden>
+        <img id="last-preview" alt="尾帧预览" hidden>
+        <div id="last-drop-hint">🎯 可选：点这里或拖入一张「结尾画面」<br><small>MiniMax H3 会生成从首帧过渡到这张结尾画面的视频</small></div>
+      </div>
+      <label>想让画面怎么动？（可留空）</label>
+      <textarea id="i2v-prompt" rows="3" placeholder="例如：镜头缓慢推进，人物转头微笑…"></textarea>
+    </section>
+
+    <!-- 文生视频 -->
+    <section id="panel-t2v" class="panel" hidden>
+      <label>描述你想生成的画面</label>
+      <textarea id="t2v-prompt" rows="4" placeholder="例如：一个女孩在海边回眸一笑，发丝随风飘动…"></textarea>
+    </section>
+
+    <!-- 故事模式 -->
+    <section id="panel-story" class="panel" hidden>
+      <label>① 粘贴你的故事</label>
+      <textarea id="story-input" rows="5" placeholder="例如：从前有个小女孩住在森林里，养了一只小狐狸。一天小狐狸走丢了……"></textarea>
+      <div class="story-actions">
+        <div class="field">
+          <label>分镜数量（1~20）</label>
+          <input type="number" id="n-shots" min="1" max="20" value="6">
+        </div>
+        <button id="split-btn" class="generate">📋 拆成剧本</button>
+      </div>
+      <div id="shot-list"></div>
+      <div id="chain-area" hidden>
+        <button id="chain-btn" class="generate">🎬 连续成片（首尾帧接续，一条长视频）</button>
+        <div id="chain-result"></div>
+      </div>
+      <div id="concat-area" hidden>
+        <button id="concat-btn" class="generate">🎬 拼接成片</button>
+        <div id="story-result"></div>
+      </div>
+    </section>
+
+    <!-- 无审查专属区：只用 Wan 2.2 + 无审查 LoRA，提示词走本地 uncensored 模型，不碰云端 -->
+    <section id="panel-nsfw" class="panel" hidden>
+      <div class="nsfw-banner">🔞 一键成片：写一句想法，剩下的全自动（本地编剧 → 分镜 → 人物抽卡 → 出片约 1.5 分钟短片）</div>
+      <div class="oneclick-box">
+        <textarea id="oneclick-idea" rows="3" placeholder="一句话或一段想法，例如：深夜便利店，店员女孩遇到了一个神秘的常客……"></textarea>
+        <div class="oneclick-row">
+          <select id="oneclick-style">
+            <option value="anime">动漫风格</option>
+            <option value="real">真人风格</option>
+          </select>
+          <select id="oneclick-script">
+            <option value="">自由创作（下方写想法）</option>
+          </select>
+          <button id="oneclick-btn" class="generate">🚀 一键成片</button>
+        </div>
+        <div id="oneclick-result" class="nsfw-hint"></div>
+      </div>
+      <details class="nsfw-advanced">
+        <summary>高级：手动分步出片（自动模式搞不定时才用）</summary>
+        <div class="nsfw-banner" style="margin-top:12px">手动模式：模型固定 Wan 2.2 + 无审查 LoRA；提示词书写由本地 qwen3.8-uncensored 处理，不经过云端过滤。</div>
+      <div id="nsfw-dropzone" class="dropzone">
+        <input type="file" id="nsfw-image-input" accept="image/*" hidden>
+        <img id="nsfw-preview" alt="预览" hidden>
+        <div id="nsfw-drop-hint">点击或拖入一张图片（可选首帧）<br><small>不传则为文生视频</small></div>
+      </div>
+      <label>描述你想生成的画面（可直接写露骨内容，本地模型不拦）</label>
+      <textarea id="nsfw-prompt" rows="4" placeholder="例如：昏暗旅馆房间，女人斜倚在床边，灯光昏暗，镜头缓慢推进…"></textarea>
+      <div class="nsfw-options">
+        <label class="checkbox"><input type="checkbox" id="nsfw-local" checked><span>🔞 剧情接续由本地模型代写（不碰云端）</span></label>
+        <div class="nsfw-hint">连续成片时，每段结束后由本地 qwen3.8-uncensored 看上一段结尾画面、代写下一段提示词；不勾则只做画面接续、剧情按你写死的提示词走（更稳，但不会自动接戏）。</div>
+      </div>
+      <div class="nsfw-story">
+        <label>🔞 无审查故事（可选）：整部剧情都在本地完成</label>
+        <textarea id="nsfw-story-input" rows="3" placeholder="例如：深夜的酒店走廊，女人遇见了跟踪者……"></textarea>
+        <div class="story-actions">
+          <div class="field"><label>分镜数</label><input type="number" id="nsfw-shots" min="1" max="12" value="4"></div>
+          <button id="nsfw-split-btn" class="generate">📋 本地拆成剧本</button>
+        </div>
+        <div id="nsfw-shot-list"></div>
+        <div id="nsfw-chain-area" hidden>
+          <button id="nsfw-chain-btn" class="generate">🎬 本地连续成片（一条长视频）</button>
+          <div id="nsfw-chain-result"></div>
+        </div>
+      </div>
+      </details>
+    </section>
+
+    <div class="controls">
+      <div class="field">
+        <label>模型</label>
+        <select id="model">
+          <option value="wan">Wan 2.2</option>
+          <option value="h3">MiniMax H3</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>画面比例</label>
+        <select id="resolution">
+          <option>方屏 1:1</option>
+          <option>横屏 16:9</option>
+          <option>竖屏 9:16</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>时长</label>
+        <select id="duration">
+          <option>长 · 约5秒</option>
+          <option>中 · 约3秒</option>
+          <option>短 · 约2秒</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>精度（步数越多越精细、越慢）</label>
+        <select id="steps">
+          <option value="8">省时 · 8 步</option>
+          <option value="16">标准 · 16 步</option>
+          <option value="20" selected>高质量 · 20 步</option>
+          <option value="30">极致 · 30 步</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>连续片段（自动首尾帧接续成一条）</label>
+        <select id="segments">
+          <option value="1" selected>1 段（不接续）</option>
+          <option value="2">2 段</option>
+          <option value="3">3 段</option>
+          <option value="4">4 段</option>
+          <option value="5">5 段</option>
+          <option value="6">6 段</option>
+        </select>
+      </div>
+      <button id="generate-btn" class="generate">✨ 生成视频</button>
+      <button id="add-queue-btn" class="again">➕ 加入清单</button>
+    </div>
+
+    <!-- 待生成清单（方式 B：先攒几条，再一起开始） -->
+    <section id="queue-list" hidden>
+      <div class="queue-head">
+        <span class="queue-title">📋 待生成清单（<b id="queue-count">0</b> 条）</span>
+        <button id="start-all-btn" class="generate">🚀 全部开始</button>
+        <button id="clear-queue-btn" class="again">清空</button>
+      </div>
+      <div id="queue-items"></div>
+    </section>
+
+    <!-- 任务队列面板：排队 / 进度 / 完成预览都在这 -->
+    <section class="history">
+      <h3>📊 任务队列</h3>
+      <div id="task-list"></div>
+    </section>
+  </main>
+
+  <script src="/web/app.js"></script>
+</body>
+</html>

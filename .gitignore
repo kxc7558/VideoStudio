@@ -1,0 +1,43 @@
+# ---- 依赖 / 虚拟环境 ----
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 运行产物（生成的视频、上传的图片）----
+output/
+uploads/
+
+# ---- 大体积中间产物（超分拆出的帧序列，一次 7.9GB，绝不进版本库）----
+upscale_work/
+test_upscale/
+
+# ---- 归档的运行日志（留在本机可查，但不进版本库）----
+archive/logs/
+
+# ---- 密钥 / 本地配置（绝不上传）----
+local_config.py
+.env
+*.log
+server.log
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# 无审查管道的本地产物（故事/分镜/日志，绝不入库）
+output/_nsfw*
+output/_rzgar_page.html
+output/_wan_gh.html
+output/_comfy_blog.html
+output/_wan_tips.html
+output/_civitai.html
+output/_wan_official_readme.md
+output/_kijai_*.json
+
+# 剧本与内容文件（绝不入库）
+juben/
+*.txt
+!README.md
