@@ -295,6 +295,7 @@ function statusText(info) {
   if (info.state === 'error') return '❌ 失败';
   if (info.state === 'cancelled') return '🚫 已取消';
   if (info.state === 'awaiting_review') return info.review_stage === 'storyboard' ? '⏸ 等待分镜审查' : '⏸ 等待成片审查';
+  if (info.state === 'awaiting_shot') return `🎬 第 ${Number(info.cur_shot ?? 0) + 1} 镜待审查`;
   if (info.queueState === 'pending') return `⏳ 排队中（第 ${info.queuePos} 位）`;
   if (info.queueState === 'running') {
     return info.progress > 0 ? `🎨 生成中 ${Math.round(info.progress)}%` : '🎨 生成中（加载模型…）';
@@ -388,6 +389,20 @@ function taskCard(taskId, info) {
       </div>
       <div class="review-resample">
         <input id="resample-prompt-${taskId}" placeholder="可选：重抽时替换第几镜的提示词格式：镜号: 新提示词（留空则用原提示词）">
+      </div>
+    </div>`;
+  } else if (info.state === 'awaiting_shot') {
+    // 逐镜审查：当前镜视频 + 通过/重抽/直接拼片
+    const cur = Number(info.cur_shot ?? 0);
+    const total = (info.shots || []).length;
+    body = `<div class="review-box">
+      <video class="task-video" src="/api/segment-video/${taskId}/${cur}" controls autoplay loop></video>
+      <div class="review-tip">🎬 第 ${cur + 1}/${total} 镜已生成。看过没问题点「✅ 通过，下一镜」（尾帧自动接续下一镜）；不满意点「🎲 重抽」（可在框里输入替换提示词）。</div>
+      <input class="review-note" id="shot-prompt-${taskId}" placeholder="可选：重抽时的替换提示词（英文，留空用原提示词）">
+      <div class="review-actions" style="margin-top:10px">
+        <button class="generate" onclick="shotNext('${taskId}')">✅ 通过，下一镜</button>
+        <button class="generate" onclick="shotResample('${taskId}')">🎲 重抽本镜</button>
+        <button class="generate" onclick="shotFinish('${taskId}')">⏭ 跳过剩余直接拼片</button>
       </div>
     </div>`;
   } else if (done) {
@@ -564,6 +579,43 @@ async function approveFinal(taskId) {
   } catch (e) { alert('操作失败：' + (e.message || e)); }
 }
 
+async function shotNext(taskId) {
+  const fd = new FormData(); fd.append('task_id', taskId);
+  try {
+    const r = await fetch('/api/review/shot_next', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) { alert(data.error || '操作失败'); return; }
+    const info = activeTasks.get(taskId);
+    if (info) { info.state = 'running'; info.msg = data.status === 'concatenating' ? '拼接成片…' : `第 ${data.next + 1} 镜生成中…`; }
+    renderTasks();
+  } catch (e) { alert('操作失败：' + (e.message || e)); }
+}
+
+async function shotResample(taskId) {
+  const el = document.getElementById(`shot-prompt-${taskId}`);
+  const fd = new FormData(); fd.append('task_id', taskId); fd.append('new_prompt', el ? el.value.trim() : '');
+  try {
+    const r = await fetch('/api/review/shot_resample', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) { alert(data.error || '重抽失败'); return; }
+    const info = activeTasks.get(taskId);
+    if (info) { info.state = 'running'; info.msg = `第 ${data.shot + 1} 镜重抽中…`; }
+    renderTasks();
+  } catch (e) { alert('重抽失败：' + (e.message || e)); }
+}
+
+async function shotFinish(taskId) {
+  const fd = new FormData(); fd.append('task_id', taskId);
+  try {
+    const r = await fetch('/api/review/shot_finish', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) { alert(data.error || '操作失败'); return; }
+    const info = activeTasks.get(taskId);
+    if (info) { info.state = 'running'; info.msg = '拼接成片…'; }
+    renderTasks();
+  } catch (e) { alert('操作失败：' + (e.message || e)); }
+}
+
 async function recardAnchor(taskId) {
   if (!confirm('重跑人物抽卡：丢弃当前人物锚，重新抽 4 候选并重锚第 1 镜（约 20 分钟）。继续？')) return;
   const fd = new FormData();
@@ -593,6 +645,7 @@ async function pollTasks() {
       info.queuePos = t.queue_pos || 0;
       if (t.ai_prompts) info.ai_prompts = t.ai_prompts;
       if (t.review_stage) info.review_stage = t.review_stage;
+      if (t.cur_shot !== undefined) info.cur_shot = t.cur_shot;
       if (t.shots) info.shots = t.shots;
       if (t.seg_meta) info.seg_meta = t.seg_meta;
       if (t.video) info.video = t.video;

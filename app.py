@@ -259,6 +259,8 @@ def _meta_dict(task_id: str, t: dict) -> dict:
         "resampled": t.get("resampled", []),
         "seg_meta": t.get("seg_meta", {}),
         "character_card": t.get("character_card"),
+        "cur_shot": t.get("cur_shot"),
+        "approved_shots": t.get("approved_shots", []),
         "created": t.get("created", 0),
         "updated": t.get("updated", 0),
     }
@@ -735,13 +737,17 @@ def _generate_shot_previews(task_id, shots, style, width, height, seed):
     _update(task_id, msg="预览图已全部生成，审查面板可直接看画面")
 
 
-def _oc_stage2(task_id, shots, style, width, height, length, steps, seed):
-    """一键成片阶段2：人物抽卡 → 逐镜生成（支持单镜重抽）→ 拼片 → 暂停等成片审查。
+def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_recard=False):
+    """一键成片阶段2：人物抽卡(如无锚) → 生成「当前镜」→ 停在逐镜审查（awaiting_shot）。
 
-    由 /api/review/storyboard（审查通过）或 /api/review/resample（重抽后重拼）启动。
+    逐镜审查流：每镜生成完暂停，用户通过才生成下一镜；全部通过后拼片进成片审查。
+    当前镜号存任务 meta 的 cur_shot（0 起）。
     """
     try:
-        # ③ 人物抽卡：用第 1 镜提示词生成 4 个候选片段，自动选最佳首帧当人物锚
+        with _lock:
+            tt = tasks.setdefault(task_id, {})
+            cur = tt.setdefault("cur_shot", 0)
+        # 人物抽卡：只在还没有锚时做（首镜前）
         card_seg_id = tasks.get(task_id, {}).get("character_card")
         if not card_seg_id:
             candidates = []
@@ -759,24 +765,53 @@ def _oc_stage2(task_id, shots, style, width, height, length, steps, seed):
                 for cand_id, _ in candidates:
                     if cand_id != card_seg_id:
                         (OUTPUT / f"{cand_id}.mp4").unlink(missing_ok=True)
+            if not card_seg_id:
+                _update(task_id, state="error", msg="人物抽卡全部失败，请重试")
+                return
 
-        # ④ 逐镜生成：第 1 镜用人物卡首帧做 i2v 锚定，后续尾帧接续；review_each 开启单镜重抽
-        segs = []
-        for i, s in enumerate(shots):
-            p = str(s.get("prompt", "")).strip()
-            if i == 0 and card_seg_id:
-                anchor = OUTPUT / f"{card_seg_id}_anchor.png"
-                if not anchor.exists():
-                    extract_last_frame(OUTPUT / f"{card_seg_id}.mp4", anchor)
-                segs.append({"mode": "i2v", "image": comfy.upload_image(anchor), "prompt": p})
-            else:
-                segs.append({"mode": "i2v" if i > 0 else "t2v", "image": None, "prompt": p})
-        _run_long_task(task_id, "wan", segs, width, height, length, steps, seed,
-                       bridge=True, nsfw=True, style=style, review_each=True)
+        # 生成「当前镜」
+        if cur >= len(shots):
+            _finish_all_shots(task_id, shots)
+            return
+        s = shots[cur]
+        p = str(s.get("prompt", "")).strip()
+        _update(task_id, state="running", msg=f"生成第 {cur + 1}/{len(shots)} 镜…")
+        if cur == 0:
+            anchor = OUTPUT / f"{card_seg_id}_anchor.png"
+            if not anchor.exists():
+                extract_last_frame(OUTPUT / f"{card_seg_id}.mp4", anchor)
+            ok, _ = _generate_single(f"{task_id}_s0", "i2v", comfy.upload_image(anchor), p, seed + cur, width, height, length, steps, True, style)
+        else:
+            # 上一镜尾帧做首帧（接续）
+            prev_seg = OUTPUT / f"{task_id}_s{cur - 1}.mp4"
+            bridge_png = OUTPUT / f"{task_id}_bridge{cur}.png"
+            extract_last_frame(prev_seg, bridge_png)
+            ok, _ = _generate_single(f"{task_id}_s{cur}", "i2v", comfy.upload_image(bridge_png), p, seed + cur, width, height, length, steps, True, style)
+            bridge_png.unlink(missing_ok=True)
+        if not ok:
+            _update(task_id, state="awaiting_shot", cur_shot=cur,
+                    msg=f"第 {cur + 1} 镜生成失败，可重抽或跳过")
+            return
+        # 停在逐镜审查
+        _update(task_id, state="awaiting_shot", cur_shot=cur,
+                msg=f"第 {cur + 1}/{len(shots)} 镜已生成，请审查：通过→下一镜；重抽→换一版")
     except Exception as e:  # noqa: BLE001
         if _cancelled(task_id):
             return
         _update(task_id, state="error", msg=f"出错：{e}")
+
+
+def _finish_all_shots(task_id, shots):
+    """全部镜头通过后：把各段按顺序拼接成片，进成片审查（awaiting_review/final）。"""
+    seg_videos = [OUTPUT / f"{task_id}_s{i}.mp4" for i in range(len(shots))]
+    missing = [i for i, v in enumerate(seg_videos) if not v.exists()]
+    if missing:
+        _update(task_id, state="error", msg=f"第 {[m + 1 for m in missing]} 镜缺失，无法拼接")
+        return
+    dest = OUTPUT / f"{task_id}.mp4"
+    concat_videos(seg_videos, dest)
+    _update(task_id, state="awaiting_review", review_stage="final",
+            msg="全镜通过，已拼片。成片审查：重抽/重跑抽卡/自动检查修复，或通过完成")
 
 
 @app.get("/api/juben")
@@ -1056,6 +1091,77 @@ def review_recard(task_id: str = Form(...)):
         daemon=True,
     ).start()
     return {"status": "recarding", "new_seed": new_seed}
+
+
+# ---- 逐镜审查端点：每镜生成完暂停，通过/重抽，全部通过后拼片 ----
+
+@app.post("/api/review/shot_next")
+def review_shot_next(task_id: str = Form(...)):
+    """逐镜审查：通过当前镜 → 生成下一镜。全部镜通过时自动拼片进成片审查。"""
+    t = _task_or_none(task_id)
+    if not t or t.get("state") != "awaiting_shot":
+        return JSONResponse({"error": "任务不在逐镜审查阶段"}, 400)
+    shots = t.get("shots", [])
+    with _lock:
+        tt = tasks.setdefault(task_id, {})
+        cur = tt.get("cur_shot", 0)
+        tt["cur_shot"] = cur + 1
+        tt.setdefault("approved_shots", []).append(cur)
+    if cur + 1 >= len(shots):
+        _update(task_id, state="running", msg="全部镜头通过，拼接成片…")
+        threading.Thread(
+            target=_finish_all_shots,
+            args=(task_id, shots),
+            daemon=True,
+        ).start()
+        return {"status": "concatenating"}
+    _update(task_id, state="running", msg=f"第 {cur + 2}/{len(shots)} 镜准备中…")
+    w, h = RESOLUTIONS.get(t.get("resolution", ""), (480, 832))
+    threading.Thread(
+        target=_oc_stage2,
+        args=(task_id, shots, t.get("style", "real"), w, h, 81, 20, t.get("seed", 42) or 42),
+        daemon=True,
+    ).start()
+    return {"status": "next_shot", "next": cur + 1}
+
+
+@app.post("/api/review/shot_resample")
+def review_shot_resample(task_id: str = Form(...), new_prompt: str = Form("")):
+    """逐镜审查：重抽当前镜（可选换提示词）。"""
+    t = _task_or_none(task_id)
+    if not t or t.get("state") != "awaiting_shot":
+        return JSONResponse({"error": "任务不在逐镜审查阶段"}, 400)
+    shots = t.get("shots", [])
+    with _lock:
+        tt = tasks.setdefault(task_id, {})
+        cur = tt.get("cur_shot", 0)
+    if new_prompt.strip():
+        shots[cur]["prompt"] = new_prompt.strip()
+        _update(task_id, shots=shots)
+    _update(task_id, state="running", msg=f"第 {cur + 1} 镜重抽中…")
+    w, h = RESOLUTIONS.get(t.get("resolution", ""), (480, 832))
+    threading.Thread(
+        target=_oc_stage2,
+        args=(task_id, shots, t.get("style", "real"), w, h, 81, 20, (t.get("seed", 42) or 42) + random.randint(1, 9999)),
+        daemon=True,
+    ).start()
+    return {"status": "resampling", "shot": cur}
+
+
+@app.post("/api/review/shot_finish")
+def review_shot_finish(task_id: str = Form(...)):
+    """逐镜审查：跳过剩余镜直接拼片（用户不想逐镜看完时用）。"""
+    t = _task_or_none(task_id)
+    if not t or t.get("state") != "awaiting_shot":
+        return JSONResponse({"error": "任务不在逐镜审查阶段"}, 400)
+    shots = t.get("shots", [])
+    _update(task_id, state="running", msg="拼接成片…")
+    threading.Thread(
+        target=_finish_all_shots,
+        args=(task_id, shots),
+        daemon=True,
+    ).start()
+    return {"status": "concatenating"}
 
 
 @app.get("/", response_class=HTMLResponse)
