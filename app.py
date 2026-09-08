@@ -678,10 +678,49 @@ def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed,
         _update(task_id, state="awaiting_review", review_stage="storyboard",
                 shots=shots, story_len=len(story),
                 msg=f"分镜已拆好（{len(shots)} 镜），请审查：可对任意镜填写修改意见，或直接通过")
+        # ④ 后台生成每镜预览图（迷你视频抽首帧），审查面板边生成边可看
+        threading.Thread(
+            target=_generate_shot_previews,
+            args=(task_id, shots, style, width, height, seed),
+            daemon=True,
+        ).start()
     except Exception as e:  # noqa: BLE001
         if _cancelled(task_id):
             return
         _update(task_id, state="error", msg=f"出错：{e}")
+
+
+def _generate_shot_previews(task_id, shots, style, width, height, seed):
+    """分镜审查阶段的预览图后台生成：每镜 17 帧迷你视频 → 抽首帧存 {task_id}_prev{i}.png。
+
+    只为审查提供画面参考，与正片生成无关（正片在审查通过后从头生成）。
+    """
+    for i, s in enumerate(shots):
+        if _cancelled(task_id):
+            return
+        prev_png = OUTPUT / f"{task_id}_prev{i}.png"
+        if prev_png.exists():
+            continue
+        p = str(s.get("prompt", "")).strip()
+        prev_id = f"{task_id}_prev{i}"
+        _update(task_id, msg=f"预览图生成中 {i + 1}/{len(shots)}（不影响审查操作）…")
+        try:
+            wf = _build_workflow("wan", "t2v", None, p, seed + 500 + i, 240, 416, 17, prev_id, 4, use_lora=True, style=style)
+            pid = comfy.submit(wf)
+            ok, history = comfy.wait_done(pid, timeout=600)
+            if not ok:
+                continue
+            vinfo = comfy.find_video(history)
+            if not vinfo:
+                continue
+            tmp = OUTPUT / f"{prev_id}.mp4"
+            comfy.download_video(vinfo, tmp)
+            subprocess.run([FFMPEG, "-y", "-i", str(tmp), "-frames:v", "1", str(prev_png)],
+                           capture_output=True, timeout=120)
+            tmp.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            continue
+    _update(task_id, msg="预览图已全部生成，审查面板可直接看画面")
 
 
 def _oc_stage2(task_id, shots, style, width, height, length, steps, seed):
@@ -1352,3 +1391,12 @@ def segment_video(task_id: str, seg_index: int):
     if f.exists():
         return FileResponse(f, media_type="video/mp4")
     return JSONResponse({"error": "段视频不存在"}, 404)
+
+
+@app.get("/api/shot-preview/{task_id}/{shot_index}")
+def shot_preview(task_id: str, shot_index: int):
+    """分镜审查用：返回该镜的预览图（后台生成中则 404，前端降级显示占位）。"""
+    f = OUTPUT / f"{task_id}_prev{shot_index}.png"
+    if f.exists():
+        return FileResponse(f, media_type="image/png")
+    return JSONResponse({"error": "预览图还没生成"}, 404)

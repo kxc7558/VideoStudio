@@ -354,11 +354,14 @@ function taskCard(taskId, info) {
     // 分镜审查面板：列出全部镜头 + 每镜意见输入框
     const shots = Array.isArray(info.shots) ? info.shots : [];
     body = `<div class="review-box">
-      <div class="review-tip">📋 分镜审查：不满意哪一镜，在框里写修改意见（如「改成她坐下」），点「提交意见并改写」；没问题直接点「通过，开始生成」。</div>
+      <div class="review-tip">📋 分镜审查：每镜显示「中文剧情 + 英文生成提示词」。不满意哪一镜，在意见框里写（如「改成她坐下」），点「提交意见并改写」；没问题直接点「通过，开始生成」。</div>
       <div class="review-shots">${shots.map((s, i) => `
         <div class="review-shot">
-          <div class="review-shot-head">第 ${i + 1} 镜 · ${esc(String(s.scene || '').slice(0, 30))}</div>
-          <div class="review-shot-prompt">${esc(String(s.prompt || '').slice(0, 160))}${String(s.prompt || '').length > 160 ? '…' : ''}</div>
+          <div class="review-shot-head">第 ${i + 1} 镜</div>
+          <div class="review-shot-cn">🎬 ${esc(String(s.scene || ''))}</div>
+          <div class="review-shot-cn">🎙 ${esc(String(s.narration || ''))}</div>
+          ${s.preview ? `<img class="review-preview" src="/api/shot-preview/${taskId}/${i}" alt="预览">` : `<img class="review-preview" src="/api/shot-preview/${taskId}/${i}" alt="预览生成中" onerror="this.style.opacity='0.15'">`}
+          <details><summary>英文提示词</summary><div class="review-shot-prompt">${esc(String(s.prompt || ''))}</div></details>
           <input class="review-note" id="review-note-${taskId}-${i}" placeholder="修改意见（可空）">
         </div>`).join('')}</div>
       <div class="review-actions">
