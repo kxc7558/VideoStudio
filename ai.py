@@ -20,10 +20,10 @@ try:
 except ImportError:
     DEEPSEEK_KEY = os.environ.get("DEEPSEEK_KEY", "")
 
-# Ollama（本地视觉）
+# Ollama（本地视觉）：qwen3.8-uncensored 自带 vision 能力且无审查（qwen2.5vl 会拒看无审查内容）
 OLLAMA_TAGS = "http://127.0.0.1:11434/api/tags"
 OLLAMA_GEN = "http://127.0.0.1:11434/api/generate"
-VL_MODEL = "qwen2.5vl:7b"
+VL_MODEL = "qwen3.8-uncensored-fast:latest"
 
 # 本地无审查文本模型（写无审查/擦边剧情提示词，不走外部 API，不经过云端过滤）
 UNCENSORED_MODEL = "qwen3.8-uncensored-fast:latest"
