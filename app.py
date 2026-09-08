@@ -324,7 +324,11 @@ ENHANCER_LORA = {
 }
 
 
-def _apply_wan_nsfw_lora(wf, high_node="8", low_node="9", anime=False, enhancer=False):
+# i2v 模型变体：distill=LightX2V 蒸馏（快）/ original=原版 20 步（质量）
+MODEL_VARIANT = {"i2v": "distill"}
+
+
+def _apply_wan_nsfw_lora(wf, high_node="8", low_node="9", anime=False, enhancer=False, skip_uncensored=False):
     """在已加载的 Wan 2.2 工作流上，给高/低噪声专家注入 LoRA 链。
 
     链路：原 GGUF → 无审查 LoRA(1.0) → [动漫 LoRA(1.0) →] [NSFW 增强(0.6) →] ModelSamplingSD3。
@@ -337,8 +341,9 @@ def _apply_wan_nsfw_lora(wf, high_node="8", low_node="9", anime=False, enhancer=
         "low": {"target": low_node, "next_id": "201"},
     }
     loras = {"high": [], "low": []}
-    loras["high"].append((NSFW_LORA["high"], 1.0))
-    loras["low"].append((NSFW_LORA["low"], 1.0))
+    if not skip_uncensored:
+        loras["high"].append((NSFW_LORA["high"], 1.0))
+        loras["low"].append((NSFW_LORA["low"], 1.0))
     if anime:
         loras["high"].append((ANIME_LORA["high"], 1.0))
         loras["low"].append((ANIME_LORA["low"], 1.0))
@@ -372,14 +377,20 @@ def _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, t
     style="anime" 时叠加动漫 LoRA 对并在提示词前加触发词 An1meStyl3。
     t2v 挂 LoRA 时锁 4 步 cfg=1（蒸馏 LoRA 配方，原版 20 步会过采样糊掉）。
     """
-    wf = json.loads((WORKFLOWS / f"{mode}_api.json").read_text(encoding="utf-8"))
+    # i2v 有两个 workflow：蒸馏 4/6 步（快）与原版 20 步（质量模式 model_variant="original"）
+    variant = MODEL_VARIANT.get("i2v", "distill")
+    wf_name = f"{mode}_orig" if (mode == "i2v" and variant == "original") else mode
+    wf = json.loads((WORKFLOWS / f"{wf_name}_api.json").read_text(encoding="utf-8"))
     prefix = f"video/{task_id}"
     anime = use_lora and style == "anime"
     if anime:
         prompt = f"{ANIME_LORA['trigger']}, {prompt}"
     if mode == "i2v":
-        if use_lora:
+        if use_lora and variant != "original":
             wf = _apply_wan_nsfw_lora(wf, anime=anime)
+        elif use_lora and variant == "original":
+            # 原版模型：只挂动漫 LoRA（蒸馏/无审查 LoRA 是按蒸馏模型训练的，不挂）
+            wf = _apply_wan_nsfw_lora(wf, anime=anime, skip_uncensored=True)
         wf["1"]["inputs"]["image"] = image_name
         wf["3"]["inputs"]["text"] = prompt
         wf["10"]["inputs"].update({"width": width, "height": height, "length": length})
