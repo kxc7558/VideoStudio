@@ -36,7 +36,10 @@ _lock = threading.Lock()
 
 
 def _reconcile_stale_tasks():
-    """重启后把上次遗留的 queued/running 任务标记为中断（避免一直显示「进行中」）。"""
+    """重启后把上次遗留的 queued/running 任务标记为中断（避免一直显示「进行中」）。
+
+    oneclick 模式的任务由独立管道进程管理（后端重启不影响它），跳过不标。
+    """
     for f in OUTPUT.glob("*.json"):
         if f.name.startswith("_"):  # 下划线开头是管线数据文件（如 _nsfw_shots.json），不是任务档案
             continue
@@ -46,6 +49,8 @@ def _reconcile_stale_tasks():
             continue
         if not isinstance(meta, dict):
             continue
+        if meta.get("mode") == "oneclick":
+            continue  # 独立管道任务：后端重启与它无关，别误杀
         if meta.get("state") in ("queued", "running"):
             meta["state"] = "error"
             meta["msg"] = "上次运行被重启打断"
