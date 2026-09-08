@@ -278,8 +278,20 @@ def _write_meta(task_id: str, t: dict):
 def _update(task_id: str, **kw):
     with _lock:
         t = tasks.setdefault(task_id, {})
+        # 跨进程安全：内存没有这个任务时，先把磁盘档案并进来，避免空壳覆盖完整数据
+        if not t:
+            f = OUTPUT / f"{task_id}.json"
+            if f.exists():
+                try:
+                    disk = json.loads(f.read_text(encoding="utf-8"))
+                    if isinstance(disk, dict) and disk.get("task_id"):
+                        tasks[task_id] = disk
+                        t = tasks[task_id]
+                except Exception:
+                    pass
         t.update(kw)
         t["updated"] = int(time.time())
+        t.setdefault("task_id", task_id)
         _write_meta(task_id, t)
 
 
@@ -1337,7 +1349,15 @@ async def concat(task_ids: str = Form(...)):
 def status(task_id: str):
     t = tasks.get(task_id)
     if not t:
-        return JSONResponse({"error": "任务不存在"}, 404)
+        # 内存没有则回退磁盘（oneclick 审查中的任务由独立管道进程管理，后端重启不丢）
+        f = OUTPUT / f"{task_id}.json"
+        if f.exists():
+            try:
+                t = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                t = None
+        if not t:
+            return JSONResponse({"error": "任务不存在"}, 404)
     d = dict(t)
     state = t.get("state")
     pid = t.get("prompt_id")
