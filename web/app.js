@@ -438,16 +438,7 @@ function taskCard(taskId, info) {
   </div>`;
 }
 
-function reviewInputBusy() {
-  // 审查输入框正在输入（聚焦或非空）时跳过任务面板重渲染，避免页面自动滚顶打断审查
-  for (const el of document.querySelectorAll('.review-note, .review-resample input')) {
-    if (document.activeElement === el || el.value.trim()) return true;
-  }
-  return false;
-}
-
 function renderTasks() {
-  if (reviewInputBusy()) return;  // 用户正在填审查意见，别动 DOM
   const list = $('task-list');
   if (!activeTasks.size) {
     list.innerHTML = '<div class="task-empty">还没有任务。点上面的「✨ 生成视频」直接排队，或「➕ 加入清单」攒几条一起开始。</div>';
