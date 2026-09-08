@@ -116,12 +116,12 @@
       ],
       "add_noise": "enable",
       "noise_seed": 42,
-      "steps": 4,
+      "steps": 6,
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",
       "start_at_step": 0,
-      "end_at_step": 2,
+      "end_at_step": 3,
       "return_with_leftover_noise": "enable"
     }
   },
@@ -146,12 +146,12 @@
       ],
       "add_noise": "disable",
       "noise_seed": 42,
-      "steps": 4,
+      "steps": 6,
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",
-      "start_at_step": 2,
-      "end_at_step": 4,
+      "start_at_step": 3,
+      "end_at_step": 6,
       "return_with_leftover_noise": "disable"
     }
   },
@@ -175,7 +175,7 @@
         "13",
         0
       ],
-      "fps": 16,
+      "fps": 24,
       "bit_depth": 8
     }
   },

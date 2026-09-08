@@ -65,6 +65,7 @@ _reconcile_stale_tasks()
 # 分辨率预设（中文标签 -> (宽, 高)）
 RESOLUTIONS = {
     "竖屏 9:16": (480, 832),
+    "竖屏高清 9:16": (576, 1024),
     "方屏 1:1": (640, 640),
     "横屏 16:9": (832, 480),
 }
@@ -870,7 +871,7 @@ def list_juben():
 async def oneclick(
     idea: str = Form(""),
     style: str = Form("anime"),
-    resolution: str = Form("竖屏 9:16"),
+    resolution: str = Form("竖屏高清 9:16"),
     seed: int = Form(-1),
     script_file: str = Form(""),
 ):
