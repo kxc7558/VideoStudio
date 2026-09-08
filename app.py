@@ -260,6 +260,7 @@ def _meta_dict(task_id: str, t: dict) -> dict:
         "seg_meta": t.get("seg_meta", {}),
         "character_card": t.get("character_card"),
         "cur_shot": t.get("cur_shot"),
+        "card_desc": t.get("card_desc", ""),
         "approved_shots": t.get("approved_shots", []),
         "created": t.get("created", 0),
         "updated": t.get("updated", 0),
@@ -705,10 +706,39 @@ def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed,
 
 
 def _generate_shot_previews(task_id, shots, style, width, height, seed):
-    """分镜审查阶段的预览图后台生成：每镜 17 帧迷你视频 → 抽首帧存 {task_id}_prev{i}.png。
+    """分镜审查阶段的预览图后台生成：先人物抽卡（无锚时），再每镜用「锚帧 i2v」出预览。
 
+    锚驱动：所有预览从同一人物锚出发，审查时看到的人物从头到尾是同一个。
     只为审查提供画面参考，与正片生成无关（正片在审查通过后从头生成）。
     """
+    # 人物抽卡（无锚时）：与正片同一套抽卡逻辑，锚选出后正片阶段直接复用
+    card_seg_id = tasks.get(task_id, {}).get("character_card")
+    if not card_seg_id:
+        candidates = []
+        for k in range(4):
+            if _cancelled(task_id):
+                return
+            _update(task_id, msg=f"③ 人物抽卡 {k + 1}/4（预览与正片共用此锚）…")
+            cand_id = f"{task_id}_card{k}"
+            ok, vid = _generate_single(cand_id, "t2v", None, shots[0]["prompt"], seed + 1000 + k, width, height, 33, 20, True, style)
+            if ok:
+                candidates.append((cand_id, vid))
+        if candidates:
+            card_seg_id = _pick_best_character_card(candidates)
+            _update(task_id, character_card=card_seg_id)
+            for cand_id, _ in candidates:
+                if cand_id != card_seg_id:
+                    (OUTPUT / f"{cand_id}.mp4").unlink(missing_ok=True)
+    if not card_seg_id:
+        _update(task_id, msg="人物抽卡失败，预览图改用无锚模式")
+        card_seg_id = None
+
+    anchor = None
+    if card_seg_id:
+        anchor = OUTPUT / f"{card_seg_id}_anchor.png"
+        if not anchor.exists():
+            extract_last_frame(OUTPUT / f"{card_seg_id}.mp4", anchor)
+
     for i, s in enumerate(shots):
         if _cancelled(task_id):
             return
@@ -719,7 +749,11 @@ def _generate_shot_previews(task_id, shots, style, width, height, seed):
         prev_id = f"{task_id}_prev{i}"
         _update(task_id, msg=f"预览图生成中 {i + 1}/{len(shots)}（不影响审查操作）…")
         try:
-            wf = _build_workflow("wan", "t2v", None, p, seed + 500 + i, 240, 416, 17, prev_id, 4, use_lora=True, style=style)
+            if anchor and anchor.exists():
+                # 锚驱动：人物锚做首帧 i2v，人物一致
+                wf = _build_workflow("wan", "i2v", comfy.upload_image(anchor), p, seed + 500 + i, 240, 416, 17, prev_id, 4, use_lora=True, style=style)
+            else:
+                wf = _build_workflow("wan", "t2v", None, p, seed + 500 + i, 240, 416, 17, prev_id, 4, use_lora=True, style=style)
             pid = comfy.submit(wf)
             ok, history = comfy.wait_done(pid, timeout=600)
             if not ok:
@@ -734,7 +768,7 @@ def _generate_shot_previews(task_id, shots, style, width, height, seed):
             tmp.unlink(missing_ok=True)
         except Exception:  # noqa: BLE001
             continue
-    _update(task_id, msg="预览图已全部生成，审查面板可直接看画面")
+    _update(task_id, msg="预览图已全部生成（人物锚统一），审查面板可直接看画面")
 
 
 def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_recard=False):
@@ -761,7 +795,13 @@ def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_
                     candidates.append((cand_id, vid))
             if candidates:
                 card_seg_id = _pick_best_character_card(candidates)
-                _update(task_id, character_card=card_seg_id)
+                card_desc = ""
+                if card_seg_id:
+                    anchor_tmp = OUTPUT / f"{card_seg_id}_anchor.png"
+                    if not anchor_tmp.exists():
+                        extract_last_frame(OUTPUT / f"{card_seg_id}.mp4", anchor_tmp)
+                    card_desc = ai.describe_image(anchor_tmp)  # 人物描述，正片每镜前置保一致
+                _update(task_id, character_card=card_seg_id, card_desc=card_desc)
                 for cand_id, _ in candidates:
                     if cand_id != card_seg_id:
                         (OUTPUT / f"{cand_id}.mp4").unlink(missing_ok=True)
@@ -775,6 +815,9 @@ def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_
             return
         s = shots[cur]
         p = str(s.get("prompt", "")).strip()
+        card_desc = tasks.get(task_id, {}).get("card_desc", "")
+        if card_desc:
+            p = f"same character: {card_desc}. {p}"
         _update(task_id, state="running", msg=f"生成第 {cur + 1}/{len(shots)} 镜…")
         if cur == 0:
             anchor = OUTPUT / f"{card_seg_id}_anchor.png"
