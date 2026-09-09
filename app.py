@@ -687,7 +687,9 @@ def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed,
             chunk = story[start:end]
             _update(task_id, msg=f"② 拆分镜 {len(shots)}/{NSFW_TARGET}（剧本进度 {start * 100 // max(1, story_len)}%~{end * 100 // max(1, story_len)}%）…")
             brief = (f"\n\n全片风格：{style_brief}。这是一部长剧本的连续拆镜任务，全片目标 {NSFW_TARGET} 镜，"
-                     f"本批从剧本片段里拆出 {NSFW_BATCH} 个镜头，剧情按片段顺序推进，不要回头重复。")
+                     f"本批从剧本片段里拆出 {NSFW_BATCH} 个镜头，剧情按片段顺序推进，不要回头重复。\n"
+                     "另外：给每个镜头加一个布尔字段 \"is_new_scene\"——该镜换了新地点/新时间/明显换了布景就是 true，"
+                     "与上一镜同场景连续演出就是 false。这个字段决定该镜用文生视频还是画面接续生成。")
             try:
                 batch = sb.split_story(chunk, NSFW_BATCH, brief, local=True)
             except Exception:  # noqa: BLE001
@@ -821,7 +823,10 @@ def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_
                 _update(task_id, state="error", msg="人物抽卡全部失败，请重试")
                 return
 
-        # 生成「当前镜」
+        # 生成「当前镜」：模式由场景标注决定（剧情自由度 > 画面接续）
+        #   新场景镜（is_new_scene=true）→ t2v：剧情完全由提示词驱动，锚不绑架画面
+        #   同场景镜（false）→ 上一镜尾帧 i2v：画面自然接续
+        # 人物一致性统一靠 card_desc 前置（两种模式都带）。
         if cur >= len(shots):
             _finish_all_shots(task_id, shots)
             return
@@ -829,20 +834,20 @@ def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_
         p = str(s.get("prompt", "")).strip()
         card_desc = tasks.get(task_id, {}).get("card_desc", "")
         if card_desc:
-            p = f"same character: {card_desc}. {p}"
-        _update(task_id, state="running", msg=f"生成第 {cur + 1}/{len(shots)} 镜…")
-        if cur == 0:
-            anchor = OUTPUT / f"{card_seg_id}_anchor.png"
-            if not anchor.exists():
-                extract_last_frame(OUTPUT / f"{card_seg_id}.mp4", anchor)
-            ok, _ = _generate_single(f"{task_id}_s0", "i2v", comfy.upload_image(anchor), p, seed + cur, width, height, length, steps, True, style)
-        else:
-            # 上一镜尾帧做首帧（接续）
+            p = f"same character as before: {card_desc}. {p}"
+        is_new_scene = bool(s.get("is_new_scene", cur == 0))  # 首镜或标注新场景
+        _update(task_id, state="running", msg=f"生成第 {cur + 1}/{len(shots)} 镜（{'新场景·文生' if is_new_scene else '同场景·接续'}）…")
+        ok = False
+        if not is_new_scene and cur > 0:
+            # 同场景：上一镜尾帧做首帧（画面接续）
             prev_seg = OUTPUT / f"{task_id}_s{cur - 1}.mp4"
             bridge_png = OUTPUT / f"{task_id}_bridge{cur}.png"
             extract_last_frame(prev_seg, bridge_png)
             ok, _ = _generate_single(f"{task_id}_s{cur}", "i2v", comfy.upload_image(bridge_png), p, seed + cur, width, height, length, steps, True, style)
             bridge_png.unlink(missing_ok=True)
+        else:
+            # 新场景（或首镜）：锚帧只保人物，剧情走 t2v
+            ok, _ = _generate_single(f"{task_id}_s{cur}", "t2v", None, p, seed + cur, width, height, length, steps, True, style)
         if not ok:
             _update(task_id, state="awaiting_shot", cur_shot=cur,
                     msg=f"第 {cur + 1} 镜生成失败，可重抽或跳过")
