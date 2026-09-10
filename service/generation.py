@@ -150,8 +150,8 @@ def _run_long_task(task_id, model, segments, width, height, length, steps, seed,
                     _update(task_id, msg=f"第 {i + 1}/{len(segments)} 段完成，正在分析结尾画面、接续下一段…")
                     prev_desc = ai.describe_image(frame_png)
                     original = segments[i + 1]["prompt"]
-                    if model == "h3":
-                        # H3：优先「回看尾帧→按官方格式接续」，失败退到纯官方格式改写（都输出官方格式）
+                    if model == "h3" and not nsfw:
+                        # H3 非无审查：优先「回看尾帧→按官方格式接续」，失败退到纯官方格式改写（都输出官方格式）
                         bridged = ai.bridge_next_prompt(prev_desc, original, "h3", seconds, local=nsfw) if prev_desc else ""
                         if not bridged:
                             bridged = ai.h3_prompt(original, "i2v", seconds)
