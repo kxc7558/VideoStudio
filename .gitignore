@@ -41,3 +41,4 @@ output/_kijai_*.json
 juben/
 *.txt
 !README.md
+_downloads/
