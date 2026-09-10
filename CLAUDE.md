@@ -3,6 +3,14 @@
 面向「小白也能一键出视频」的本地客户端，封装 ComfyUI 的图生视频 / 文生视频能力。
 **用户是非技术 PM**：质量优先、不怕慢、可挂后台。交流时避免技术黑话，说人话。
 
+## AI 原生标准件（2026-09-10 装）
+
+- **上岗证 `AGENTS.md`**：任何 AI 从这里开始（读宪法 → 读层守则 → 占班 → 干活 → 释放排班表）
+- **机器档案 `project.yaml`**：怎么跑/怎么测/路径/端口的机器可读速查表
+- **排班表 `data/ai-shift.json`**：动手改代码前先占班，同一时刻只一个 AI 在岗；2 小时无更新视为离岗可接管；干完释放
+- **意见箱**：界面右下角 💬 按钮吐槽 → `data/feedback/*.json`；`/api/feedback`（POST 用户吐槽 / GET AI 读箱）；用户说「**处理意见箱**」→ 按 `处理意见箱.md` 执行，处理完在 `data/feedback/changelog.md` 记成长日志
+- 意见箱测试：`venv/Scripts/python.exe test_feedback.py --api`（4 项全过为绿）
+
 ## 运行方式
 
 - 双击 `run.bat`：自动拉起 ComfyUI（`D:\ComfyUI_Wan`，端口 8188）+ 出片台后端（uvicorn，端口 8000）+ 打开浏览器。

@@ -216,6 +216,20 @@
     </section>
   </main>
 
+  <!-- 意见箱：右下角一键吐槽，攒进 data/feedback/，AI 定期处理并回信 -->
+  <div id="feedback-widget">
+    <div id="feedback-panel" hidden>
+      <div class="feedback-head">
+        <span>💬 一句话吐槽</span>
+        <button id="feedback-close" class="feedback-x">✕</button>
+      </div>
+      <textarea id="feedback-text" rows="3" placeholder="哪里不顺手、想要什么，直接说…"></textarea>
+      <div id="feedback-replies"></div>
+      <button id="feedback-send" class="generate">📨 发送</button>
+    </div>
+    <button id="feedback-btn" title="吐槽一句，应用会进化">💬</button>
+  </div>
+
   <script src="/web/app.js"></script>
 </body>
 </html>

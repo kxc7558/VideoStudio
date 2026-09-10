@@ -19,3 +19,6 @@
 | POST /api/review/storyboard | 分镜审查（意见改写→qwen3.8 重写→放行） |
 | POST /api/review/resample · fixcheck · approve · recard | 重抽/检查修复/通过/重跑抽卡 |
 | POST /api/review/shot_next · shot_resample · shot_finish | 逐镜审查三动作 |
+| POST /api/feedback | 新增吐槽（意见箱入口） |
+| GET /api/feedback | 意见列表（未处理在前，AI 处理意见箱走这里） |
+| GET /api/feedback/changelog | 成长日志原文 |

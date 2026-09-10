@@ -11,6 +11,8 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from db import feedback_store
+
 import ai
 import comfy
 import storyboard
@@ -752,5 +754,32 @@ def review_shot_finish(task_id: str = Form(...)):
         daemon=True,
     ).start()
     return {"status": "concatenating"}
+
+
+# ---- 意见箱：用户一键吐槽 + AI 处理后回信（自我迭代的原料入口） ----
+
+
+@router.post("/api/feedback")
+async def add_feedback(text: str = Form(...), page: str = Form("")):
+    """新增一条吐槽。文字必填，超长截断；不弹窗打断用户。"""
+    if not text.strip():
+        return JSONResponse({"error": "吐槽内容不能为空"}, 400)
+    item = feedback_store.add_feedback(text.strip(), page)
+    return {"ok": True, "id": item["id"]}
+
+
+@router.get("/api/feedback")
+def list_feedback():
+    """意见列表：未处理在前。AI 处理意见箱时也走这里（AI 第一性：双入口）。"""
+    return {"items": feedback_store.list_feedback()}
+
+
+@router.get("/api/feedback/changelog")
+def feedback_changelog():
+    """成长日志原文（AI 第一性：不开界面也能读应用学会了什么）。"""
+    f = feedback_store.FEEDBACK / "changelog.md"
+    if not f.exists():
+        return {"text": "（暂无成长日志）"}
+    return {"text": f.read_text(encoding="utf-8", errors="ignore")}
 
 

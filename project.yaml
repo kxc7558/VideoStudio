@@ -1,0 +1,20 @@
+# 机器可读房产档案（AI 第一性）
+name: VideoStudio（出片台）
+purpose: 小白一键出视频客户端：封装 ComfyUI 图生/文生视频 + 一键成片 + 人工审查
+run: run.bat
+run_url: http://127.0.0.1:8000/
+test: venv/Scripts/python.exe -m pytest test_feedback.py -v
+ai_entry: AGENTS.md
+constitution: CLAUDE.md
+layers:
+  api: api/
+  service: service/
+  db: db/
+  shared: shared/
+feedback_dir: data/feedback
+changelog: data/feedback/changelog.md
+ai_shift_file: data/ai-shift.json
+ports:
+  app: 8000
+  comfyui: 8188
+  ollama: 11434

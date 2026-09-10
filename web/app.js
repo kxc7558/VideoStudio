@@ -1012,3 +1012,52 @@ checkHealth();
 loadTasks();
 setInterval(checkHealth, 15000);
 setInterval(pollTasks, 2000);
+
+// ===== 意见箱（前端入口）：一键吐槽 + 查看回信，不打扰出片主流程 =====
+async function loadFeedbackReplies() {
+  try {
+    const r = await fetch('/api/feedback');
+    const data = await r.json();
+    const handled = (data.items || []).filter(x => x.status !== 'new' && x.reply);
+    const box = $('feedback-replies');
+    if (!box) return;
+    box.innerHTML = handled.length
+      ? handled.slice(0, 5).map(x =>
+          `<div class="feedback-reply"><span class="fb-status ${x.status === 'wontfix' ? 'wontfix' : ''}">${x.status === 'wontfix' ? '暂不处理' : '已回应'}</span>${esc(x.reply)}<span class="fb-time">${esc(x.time)} 你说：${esc(x.text.slice(0, 40))}${x.text.length > 40 ? '…' : ''}</span></div>`
+        ).join('')
+      : '<div class="feedback-empty">还没有回信。吐槽发送后，AI 会在这里回复你。</div>';
+  } catch (e) { /* 静默：意见箱不打扰主功能 */ }
+}
+
+function setupFeedbackWidget() {
+  const panel = $('feedback-panel');
+  if (!panel) return;
+  $('feedback-btn').addEventListener('click', () => {
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) loadFeedbackReplies();
+  });
+  $('feedback-close').addEventListener('click', () => { panel.hidden = true; });
+  $('feedback-send').addEventListener('click', async () => {
+    const text = $('feedback-text').value.trim();
+    if (!text) { alert('先写一句吐槽吧'); return; }
+    const btn = $('feedback-send');
+    btn.disabled = true;
+    try {
+      const fd = new FormData();
+      fd.append('text', text);
+      fd.append('page', mode);
+      const r = await fetch('/api/feedback', { method: 'POST', body: fd });
+      const data = await r.json();
+      if (!r.ok) { alert(data.error || '发送失败'); return; }
+      $('feedback-text').value = '';
+      panel.hidden = true;
+      loadFeedbackReplies();
+    } catch (e) {
+      alert('发送失败：' + e);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+setupFeedbackWidget();
+loadFeedbackReplies();

@@ -8,6 +8,7 @@ OUTPUT = BASE / "output"
 UPLOADS = BASE / "uploads"
 JUBEN = BASE / "juben"
 WEB = BASE / "web"
+FEEDBACK = BASE / "data" / "feedback"
 CREATIVE_PROFILES = OUTPUT / "creative_profiles.json"
 
 # 拼接视频用的 ffmpeg（复用 ComfyUI 自带的二进制，避免再下载）

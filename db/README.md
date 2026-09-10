@@ -11,3 +11,4 @@
 | list_from_disk() | tasks_store.py | 读全部磁盘档案 |
 | cancelled(task_id) | tasks_store.py | 查取消标记 |
 | profiles() / save_profiles(data) / clean_profiles(data) | profiles_store.py | 制片资料读写 |
+| add_feedback(text, page, screenshot) / list_feedback() / get_feedback(id) / update_status(id, status, reply) | feedback_store.py | 意见箱存取（每条一个 json，落盘 data/feedback/） |
