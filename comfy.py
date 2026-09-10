@@ -55,7 +55,8 @@ def h3_ready() -> bool:
         info = r.json().get("H3ModelLoaderAny", {})
         model_name = info.get("input", {}).get("required", {}).get("model_name", {})
         names = list(model_name[0]) if model_name else []
-        if not any("MiniMax-H3" in n for n in names):
+        # 兼容两种命名：官方剪枝版 "MiniMax-H3-*"，leejet 未剪枝 GGUF "minimax_h3_*"
+        if not any("MiniMax-H3" in n or "minimax_h3" in n.lower() for n in names):
             return False
         r2 = httpx.get(COMFY + "/object_info/CLIPLoader", timeout=15)
         r2.raise_for_status()

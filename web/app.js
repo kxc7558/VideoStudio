@@ -110,9 +110,8 @@ document.querySelectorAll('.tab').forEach(btn => {
     $('panel-nsfw').hidden = mode !== 'nsfw';
     $('generate-btn').style.display = mode === 'story' ? 'none' : '';
     $('add-queue-btn').style.display = mode === 'story' ? 'none' : '';
-    // 无审查 tab：显示本地模型状态灯；模型下拉强制 Wan（无审查只有 Wan 有 LoRA）
+    // 无审查 tab：显示本地模型状态灯（模型在无审查面板内的下拉里选）
     $('uncensored-status').hidden = mode !== 'nsfw';
-    if (mode === 'nsfw') $('model').value = 'wan';
   });
 });
 
@@ -185,12 +184,12 @@ async function submitGenerate(formData) {
 }
 
 function currentConfig() {
-  // 无审查 tab：有首帧图则按图生（i2v），否则文生（t2v）；模型强制 Wan，并带上 nsfw 标志。
+  // 无审查 tab：有首帧图则按图生（i2v），否则文生（t2v）；模型由「模型」下拉选（Wan/H3 均挂无审查 LoRA）。
   const isNsfw = mode === 'nsfw';
   const effMode = isNsfw ? (nsfwImageFile ? 'i2v' : 't2v') : (mode === 'story' ? 't2v' : mode);
   return {
     mode: effMode,
-    model: isNsfw ? 'wan' : $('model').value,
+    model: isNsfw ? ($('nsfw-model').value || 'wan') : $('model').value,
     prompt: isNsfw ? $('nsfw-prompt').value : (mode === 'i2v' ? $('i2v-prompt').value : $('t2v-prompt').value),
     resolution: $('resolution').value,
     duration: $('duration').value,

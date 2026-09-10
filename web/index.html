@@ -123,7 +123,13 @@
       </div>
       <details class="nsfw-advanced">
         <summary>高级：手动分步出片（自动模式搞不定时才用）</summary>
-        <div class="nsfw-banner" style="margin-top:12px">手动模式：模型固定 Wan 2.2 + 无审查 LoRA；提示词书写由本地 qwen3.8-uncensored 处理，不经过云端过滤。</div>
+        <div class="nsfw-banner" style="margin-top:12px">手动模式：提示词书写由本地 qwen3.8-uncensored 处理，不经过云端过滤。</div>
+        <div class="field"><label>模型</label>
+          <select id="nsfw-model">
+            <option value="wan">Wan 2.2 + 无审查 LoRA</option>
+            <option value="h3">MiniMax H3 + 无审查 LoRA</option>
+          </select>
+        </div>
       <div id="nsfw-dropzone" class="dropzone">
         <input type="file" id="nsfw-image-input" accept="image/*" hidden>
         <img id="nsfw-preview" alt="预览" hidden>

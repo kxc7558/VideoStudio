@@ -26,6 +26,13 @@ ENHANCER_LORA = {
     "strength": 0.6,
 }
 
+# H3 无审查 LoRA（SexGod1979/NaughtyTimes-MiniMax-H3，rank64）。
+# 作者说明：在**未剪枝** FL2VA 底模上训练（含 adaln modulation），挂剪枝底模效果大打折扣，
+# 所以无审查 H3 固定用未剪枝底模 `minimax_h3_fl2va-Q4_K_M.gguf`（leejet 转档）。
+# 强度 1.0，支持 t2v 和 i2v（50/50 训练配比）。
+H3_NSFW_LORA = "SexGod_NaughtyTimes_v3_rank64_unpruned.safetensors"
+H3_NSFW_BASE = "minimax_h3_fl2va-Q4_K_M.gguf"
+
 
 # i2v 模型变体：distill=LightX2V 蒸馏（快）/ original=原版 20 步（质量）
 MODEL_VARIANT = {"i2v": "distill"}
@@ -135,9 +142,25 @@ def _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, t
     return wf
 
 
-def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name=None):
-    """MiniMax H3 工作流：单模型（FL2VA）同时支持 t2v 与 i2v（首帧）；可选指定尾帧做「首尾帧过渡」。"""
+def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name=None, use_lora=False):
+    """MiniMax H3 工作流：单模型（FL2VA）同时支持 t2v 与 i2v（首帧）；可选指定尾帧做「首尾帧过渡」。
+
+    use_lora=True（无审查链路）时：
+    - DiT 换成未剪枝 Q4_K_M GGUF（NaughtyTimes LoRA 按未剪枝模型训练，剪枝版效果大打折扣）；
+    - 在 H3ModelLoaderAny → BasicGuider 之间注入 LoraLoaderModelOnly（强度 1.0，节点 "300"）。
+    """
     wf = json.loads((WORKFLOWS / f"h3_{mode}_api.json").read_text(encoding="utf-8"))
+    if use_lora:
+        wf["1"]["inputs"]["model_name"] = H3_NSFW_BASE
+        wf["300"] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {
+                "model": wf["6"]["inputs"]["model"],  # BasicGuider 当前的上游（H3ModelLoaderAny）
+                "lora_name": H3_NSFW_LORA,
+                "strength_model": 1.0,
+            },
+        }
+        wf["6"]["inputs"]["model"] = ["300", 0]
     wf["4"]["inputs"].update({"prompt": prompt, "width": width, "height": height, "length": length})
     wf["5"]["inputs"]["noise_seed"] = seed
     wf["8"]["inputs"]["steps"] = steps
@@ -152,7 +175,7 @@ def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, ta
 
 def _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps=20, last_frame_name=None, use_lora=True, style="real"):
     if model == "h3":
-        return _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name)
+        return _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name, use_lora=use_lora)
     return _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, use_lora, style)
 
 

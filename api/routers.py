@@ -178,11 +178,7 @@ async def generate(
         return JSONResponse({"error": "文生视频模型还在下载中，暂不可用"}, 503)
 
     nsfw_flag = nsfw == "1"
-    # 无审查出片只用 Wan 2.2（只有它有无审查 LoRA）；H3 不支持无审查，强制回退 Wan。
-    if nsfw_flag and model == "h3":
-        model = "wan"
-        if mode == "t2v" and not comfy.t2v_ready():
-            return JSONResponse({"error": "无审查只支持 Wan 2.2；文生视频模型还在下载中"}, 503)
+    # 无审查 H3 已支持（NaughtyTimes LoRA + 未剪枝底模），不再强制回退 Wan。
 
     width, height = RESOLUTIONS.get(resolution, (640, 640))
     length = (DURATIONS_H3 if model == "h3" else DURATIONS).get(duration, 124 if model == "h3" else 81)
@@ -313,11 +309,7 @@ async def story_long(
         return JSONResponse({"error": "文生视频模型还在下载中，暂不可用"}, 503)
 
     nsfw_flag = nsfw == "1"
-    # 无审查出片只用 Wan 2.2（只有它有无审查 LoRA）；H3 不支持无审查，强制回退 Wan。
-    if nsfw_flag and model == "h3":
-        model = "wan"
-        if not comfy.t2v_ready():
-            return JSONResponse({"error": "无审查只支持 Wan 2.2；文生视频模型还在下载中"}, 503)
+    # 无审查 H3 已支持（NaughtyTimes LoRA + 未剪枝底模），不再强制回退 Wan。
 
     # 剧情接续走哪个文本模型：无审查内容必须本地（DeepSeek 会拒绝重写这类内容）。
     # 用户关掉「本地接续」开关（nsfw_local=0）→ 无审查成片不做 AI 接续，段间只抽尾帧接画面。

@@ -38,7 +38,7 @@ def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, len
             if t:
                 _update(task_id, ai_prompts=[{"segment": 1, "original": prompt, "rewritten": t}])
                 prompt = t
-        wf = _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps, last_image_name, use_lora=(nsfw and model == "wan"), style=style)
+        wf = _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps, last_image_name, use_lora=nsfw, style=style)
         prompt_id = comfy.submit(wf)
         if _cancelled(task_id):
             comfy.cancel(prompt_id)
@@ -77,7 +77,7 @@ def _run_long_task(task_id, model, segments, width, height, length, steps, seed,
     ai_prompts = []
     seconds = length / 24.0 if model == "h3" else 0.0
     # H3 官方格式：第一段（首镜头）先改写成官方格式；后续段在 bridge 里改写（尽力而为）。
-    # nsfw 无审查只走 Wan，H3 改写在此跳过。
+    # nsfw 无审查时跳过（官方格式是全年龄向措辞，与无审查链路不搭）。
     if model == "h3" and not nsfw and segments:
         orig0 = segments[0]["prompt"]
         t0 = ai.h3_prompt(orig0, segments[0]["mode"], seconds)
@@ -108,7 +108,7 @@ def _run_long_task(task_id, model, segments, width, height, length, steps, seed,
             while True:
                 wf = _build_workflow(model, seg["mode"], seg.get("image"), seg["prompt"],
                                      cur_seed, width, height, length, seg_id, steps,
-                                     use_lora=(nsfw and model == "wan"), style=style)
+                                     use_lora=nsfw, style=style)
                 pid = comfy.submit(wf)
                 _update(task_id, state="running", prompt_id=pid,
                         msg=f"第 {i + 1}/{len(segments)} 段生成中…")
