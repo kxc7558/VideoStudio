@@ -152,6 +152,25 @@ def download_video(video: dict, dest: Path) -> Path:
     return dest
 
 
+def download_binary(item: dict, dest: Path) -> Path:
+    """把 ComfyUI /view 下的任意产物（图片等）下载到本地 dest。失败返回 None。"""
+    try:
+        r = httpx.get(
+            COMFY + "/view",
+            params={
+                "filename": item["filename"],
+                "subfolder": item.get("subfolder", ""),
+                "type": item.get("type", "output"),
+            },
+            timeout=120,
+        )
+        r.raise_for_status()
+        dest.write_bytes(r.content)
+        return dest
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # 实时进度 + 队列位置（供出片台显示进度条 / 排队第几位）
 # ---------------------------------------------------------------------------

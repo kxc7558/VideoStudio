@@ -2,6 +2,7 @@
 """一键成片（业务层）：编剧→拆镜→抽卡→逐镜审查→拼片的完整状态机。"""
 import json
 import random
+import shutil
 import threading
 import time
 import uuid
@@ -12,7 +13,7 @@ import comfy
 import storyboard
 from db import tasks_store
 from shared import ffmpeg_tools
-from shared.paths import OUTPUT, JUBEN
+from shared.paths import OUTPUT, JUBEN, UPLOADS
 from service.generation import _generate_single, _finish_all_shots
 from service.workflows import _build_workflow
 def _pick_best_character_card(candidates):
@@ -32,10 +33,68 @@ def _pick_best_character_card(candidates):
     return best_id
 
 
-def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed, script_text=""):
+def _resolve_character_anchor(task_id: str, character_image: str = "", seed: int = 0, width: int = 480, height: int = 832, steps: int = 20, style: str = "real", phase: str = "preview") -> str | None:
+    """角色锚三来源解析（优先级：上传图 > 描述生成图 > 自动抽卡），返回锚帧路径名或 None。
+
+    - character_image 非空：用户上传/从角色库选的定妆图，直接验证后当锚（跳过抽卡）。
+      支持 uploads/ 或 output/_character_cards/ 下的文件名。
+    - 否则走原有 4 候选抽卡（t2v 生成迷你视频抽尾帧，视觉模型选最佳）。
+    锚选出后写任务 meta：character_card（锚来源 id）、card_desc（视觉模型描述，供全片前置）。
+    """
+    # 来源 B/C：外部锚帧（上传图或描述生成的角色卡）
+    if character_image.strip():
+        name = Path(character_image.strip()).name  # 防路径穿越
+        for cand_dir in (OUTPUT / "_character_cards", UPLOADS):
+            src = cand_dir / name
+            if src.exists():
+                anchor = OUTPUT / f"{task_id}_anchor.png"
+                shutil.copyfile(src, anchor)
+                card_desc = ai.describe_image(anchor) or ""
+                _update(task_id, character_card=f"ext:{name}", card_desc=card_desc,
+                        msg="已使用指定角色形象" + (f"（{card_desc[:40]}…）" if card_desc else ""))
+                return anchor.name
+        _update(task_id, msg=f"指定的角色图 {name} 不存在，改用自动抽卡")
+
+    # 来源 A：自动抽卡（原逻辑）
+    candidates = []
+    first_prompt = shots_first_prompt(task_id)
+    for k in range(4):
+        if _cancelled(task_id):
+            return None
+        _update(task_id, msg=f"③ 人物抽卡 {k + 1}/4…")
+        cand_id = f"{task_id}_card{k}"
+        ok, vid = _generate_single(cand_id, "t2v", None, first_prompt, seed + 1000 + k, width, height, 33, steps, True, style)
+        if ok:
+            candidates.append((cand_id, vid))
+    if not candidates:
+        return None
+    card_seg_id = _pick_best_character_card(candidates)
+    card_desc = ""
+    if card_seg_id:
+        anchor_tmp = OUTPUT / f"{card_seg_id}_anchor.png"
+        if not anchor_tmp.exists():
+            extract_last_frame(OUTPUT / f"{card_seg_id}.mp4", anchor_tmp)
+        card_desc = ai.describe_image(anchor_tmp)
+    _update(task_id, character_card=card_seg_id, card_desc=card_desc)
+    for cand_id, _ in candidates:
+        if cand_id != card_seg_id:
+            (OUTPUT / f"{cand_id}.mp4").unlink(missing_ok=True)
+    return f"{card_seg_id}_anchor.png" if card_seg_id else None
+
+
+def shots_first_prompt(task_id: str) -> str:
+    """取任务分镜第一镜的提示词（抽卡用）。没有分镜数据时退回通用定妆提示词。"""
+    shots = tasks.get(task_id, {}).get("shots", [])
+    if shots:
+        return str(shots[0].get("prompt", "")).strip() or "a woman standing, cinematic lighting, detailed face"
+    return "a woman standing, cinematic lighting, detailed face"
+
+
+def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed, script_text="", character_image=""):
     """一键成片阶段1：本地编剧写故事（或用自带剧本）→ 拆镜 → 落盘分镜 → 暂停等分镜审查。
 
     script_text 非空时跳过写故事（用户自带剧本，长剧本走进度窗口拆镜控上下文）。
+    character_image 非空时用指定角色图当锚（三来源之一），否则审查阶段自动抽卡。
     审查通过后由 /api/review/storyboard 启动阶段2（_oc_stage2）。
     """
     try:
@@ -100,7 +159,7 @@ def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed,
         # ④ 后台生成每镜预览图（迷你视频抽首帧），审查面板边生成边可看
         threading.Thread(
             target=_generate_shot_previews,
-            args=(task_id, shots, style, width, height, seed),
+            args=(task_id, shots, style, width, height, seed, character_image),
             daemon=True,
         ).start()
     except Exception as e:  # noqa: BLE001
@@ -109,39 +168,30 @@ def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed,
         _update(task_id, state="error", msg=f"出错：{e}")
 
 
-def _generate_shot_previews(task_id, shots, style, width, height, seed):
-    """分镜审查阶段的预览图后台生成：先人物抽卡（无锚时），再每镜用「锚帧 i2v」出预览。
+def _generate_shot_previews(task_id, shots, style, width, height, seed, character_image=""):
+    """分镜审查阶段的预览图后台生成：先解析角色锚（三来源），再每镜用「锚帧 i2v」出预览。
 
     锚驱动：所有预览从同一人物锚出发，审查时看到的人物从头到尾是同一个。
     只为审查提供画面参考，与正片生成无关（正片在审查通过后从头生成）。
     """
-    # 人物抽卡（无锚时）：与正片同一套抽卡逻辑，锚选出后正片阶段直接复用
+    # 角色锚（无锚时解析）：与正片同一套逻辑，锚选出后正片阶段直接复用
     card_seg_id = tasks.get(task_id, {}).get("character_card")
     if not card_seg_id:
-        candidates = []
-        for k in range(4):
-            if _cancelled(task_id):
-                return
-            _update(task_id, msg=f"③ 人物抽卡 {k + 1}/4（预览与正片共用此锚）…")
-            cand_id = f"{task_id}_card{k}"
-            ok, vid = _generate_single(cand_id, "t2v", None, shots[0]["prompt"], seed + 1000 + k, width, height, 33, 20, True, style)
-            if ok:
-                candidates.append((cand_id, vid))
-        if candidates:
-            card_seg_id = _pick_best_character_card(candidates)
-            _update(task_id, character_card=card_seg_id)
-            for cand_id, _ in candidates:
-                if cand_id != card_seg_id:
-                    (OUTPUT / f"{cand_id}.mp4").unlink(missing_ok=True)
+        _resolve_character_anchor(task_id, character_image, seed, width, height, 20, style, phase="preview")
+        card_seg_id = tasks.get(task_id, {}).get("character_card")
     if not card_seg_id:
         _update(task_id, msg="人物抽卡失败，预览图改用无锚模式")
         card_seg_id = None
 
     anchor = None
     if card_seg_id:
-        anchor = OUTPUT / f"{card_seg_id}_anchor.png"
-        if not anchor.exists():
-            extract_last_frame(OUTPUT / f"{card_seg_id}.mp4", anchor)
+        if str(card_seg_id).startswith("ext:"):
+            # 外部锚（上传图/角色卡）：锚文件是 {task_id}_anchor.png
+            anchor = OUTPUT / f"{task_id}_anchor.png"
+        else:
+            anchor = OUTPUT / f"{card_seg_id}_anchor.png"
+            if not anchor.exists() and (OUTPUT / f"{card_seg_id}.mp4").exists():
+                extract_last_frame(OUTPUT / f"{card_seg_id}.mp4", anchor)
 
     for i, s in enumerate(shots):
         if _cancelled(task_id):
@@ -175,8 +225,8 @@ def _generate_shot_previews(task_id, shots, style, width, height, seed):
     _update(task_id, msg="预览图已全部生成（人物锚统一），审查面板可直接看画面")
 
 
-def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_recard=False):
-    """一键成片阶段2：人物抽卡(如无锚) → 生成「当前镜」→ 停在逐镜审查（awaiting_shot）。
+def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_recard=False, character_image=""):
+    """一键成片阶段2：角色锚解析(三来源，如无锚) → 生成「当前镜」→ 停在逐镜审查（awaiting_shot）。
 
     逐镜审查流：每镜生成完暂停，用户通过才生成下一镜；全部通过后拼片进成片审查。
     当前镜号存任务 meta 的 cur_shot（0 起）。
@@ -185,30 +235,11 @@ def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_
         with _lock:
             tt = tasks.setdefault(task_id, {})
             cur = tt.setdefault("cur_shot", 0)
-        # 人物抽卡：只在还没有锚时做（首镜前）
+        # 角色锚：只在还没有锚时解析（首镜前）
         card_seg_id = tasks.get(task_id, {}).get("character_card")
         if not card_seg_id:
-            candidates = []
-            for k in range(4):
-                if _cancelled(task_id):
-                    return
-                _update(task_id, msg=f"③ 人物抽卡 {k + 1}/4…")
-                cand_id = f"{task_id}_card{k}"
-                ok, vid = _generate_single(cand_id, "t2v", None, shots[0]["prompt"], seed + 1000 + k, width, height, 33, steps, True, style)
-                if ok:
-                    candidates.append((cand_id, vid))
-            if candidates:
-                card_seg_id = _pick_best_character_card(candidates)
-                card_desc = ""
-                if card_seg_id:
-                    anchor_tmp = OUTPUT / f"{card_seg_id}_anchor.png"
-                    if not anchor_tmp.exists():
-                        extract_last_frame(OUTPUT / f"{card_seg_id}.mp4", anchor_tmp)
-                    card_desc = ai.describe_image(anchor_tmp)  # 人物描述，正片每镜前置保一致
-                _update(task_id, character_card=card_seg_id, card_desc=card_desc)
-                for cand_id, _ in candidates:
-                    if cand_id != card_seg_id:
-                        (OUTPUT / f"{cand_id}.mp4").unlink(missing_ok=True)
+            anchor_name = _resolve_character_anchor(task_id, character_image, seed, width, height, steps, style, phase="main")
+            card_seg_id = tasks.get(task_id, {}).get("character_card")
             if not card_seg_id:
                 _update(task_id, state="error", msg="人物抽卡全部失败，请重试")
                 return
