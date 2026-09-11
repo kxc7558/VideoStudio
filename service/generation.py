@@ -7,7 +7,9 @@ from pathlib import Path
 import ai
 import comfy
 from db import tasks_store
+from db.tasks_store import tasks, update as _update, cancelled as _cancelled, write_meta as _write_meta
 from shared import ffmpeg_tools
+from shared.ffmpeg_tools import concat_videos, extract_last_frame
 from shared.paths import OUTPUT, WORKFLOWS
 from service.workflows import _build_workflow, NSFW_LORA, ANIME_LORA, MODEL_VARIANT
 def _cancelled(task_id: str) -> bool:

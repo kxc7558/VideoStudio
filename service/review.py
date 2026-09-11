@@ -9,9 +9,10 @@ import ai
 import comfy
 import storyboard
 from db import tasks_store
+from db.tasks_store import tasks, update as _update
 from shared import ffmpeg_tools
 from shared.paths import OUTPUT
-from service.generation import _generate_single, _finish_all_shots
+from service.generation import _run_long_task, _generate_single, _finish_all_shots
 from service.oneclick import _oc_stage2
 from service.workflows import _build_workflow
 def _rebuild_and_concat(task_id, width, height, length, steps, seed, style, shots, card_seg_id):

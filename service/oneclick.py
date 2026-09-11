@@ -3,6 +3,7 @@
 import json
 import random
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -12,10 +13,14 @@ import ai
 import comfy
 import storyboard
 from db import tasks_store
+from db.tasks_store import tasks, _lock, update as _update, cancelled as _cancelled, write_meta as _write_meta
 from shared import ffmpeg_tools
-from shared.paths import OUTPUT, JUBEN, UPLOADS
+from shared.ffmpeg_tools import extract_last_frame
+from shared.paths import OUTPUT, JUBEN, UPLOADS, FFMPEG
 from service.generation import _generate_single, _finish_all_shots
 from service.workflows import _build_workflow
+
+
 def _pick_best_character_card(candidates):
     """人物抽卡自动选：用本地视觉模型描述候选首帧，选描述信息最全（人物最清晰）的一张。
 
