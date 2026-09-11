@@ -30,7 +30,7 @@ ENHANCER_LORA = {
 # 作者说明：在**未剪枝** FL2VA 底模上训练（含 adaln modulation），挂剪枝底模效果大打折扣，
 # 所以无审查 H3 固定用未剪枝底模 `minimax_h3_fl2va-Q4_K_M.gguf`（leejet 转档）。
 # 强度 1.0，支持 t2v 和 i2v（50/50 训练配比）。
-H3_NSFW_LORA = "SexGod_NaughtyTimes_v3_rank64_unpruned.safetensors"
+H3_NSFW_LORA = "NaughtyTimes_v3_rank64_unpruned.safetensors"
 H3_NSFW_BASE = "minimax_h3_fl2va-Q4_K_M.gguf"
 
 

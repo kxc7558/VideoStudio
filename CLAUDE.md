@@ -45,7 +45,8 @@
 
 - **Wan 2.2**（默认）：双专家 DiT，各约 9.5GB。i2v 用 LightX2V **固定 4 步**（蒸馏锁死，改步数画面会坏）；t2v 双专家对半切步数（8/16/20/30）。
 - **无审查 LoRA（仅 nsfw 链路挂）**：`loras/Wan2.2_LightX2V_{high,low}_n54vv.safetensors`（各 1.24GB，来源 `rzgar/Wan2.2_LightX2V_4Step_Uncensored`，sha256 已验）。后端 `_apply_wan_nsfw_lora` 在 `use_lora=True` 时给高/低噪声专家各注入一个 `LoraLoaderModelOnly` 节点（id "200"/"201" 字符串），插在 `UnetLoaderGGUF → LoraLoaderModelOnly → ModelSamplingSD3 → KSamplerAdvanced` 之间，强度 1.0。**i2v 与 t2v 都支持**：t2v 挂 LoRA 时步数锁 4、cfg=1（蒸馏 LoRA 配方，原版 20 步会过采样糊掉）。⚠️ **i2v 和 t2v 的 ModelSamplingSD3 节点号不同**（i2v 是 8/9，t2v 是 7/8），注入时要分别传——t2v 硬套 i2v 节点号会 KeyError。这两个 LoRA 融合了 LightX2V 蒸馏，所以和 4 步采样配方协同。
-- **MiniMax H3**：单模型（FL2VA），同时支持 t2v 和 i2v（首帧）。帧网格 17k+5 @ 24fps，时长帧数 56/73/124 ≈ 2.3/3.0/5.2 秒（**不是** Wan 的 4n+1 规则）。**H3 没有无审查生态，无审查模式强制回退 Wan**。
+- **MiniMax H3**：单模型（FL2VA），同时支持 t2v 和 i2v（首帧）。帧网格 17k+5 @ 24fps，时长帧数 56/73/124 ≈ 2.3/3.0/5.2 秒（**不是** Wan 的 4n+1 规则）。采样配方 **euler + beta + 20 步**（2026-09-11 A/B 实测胜出：人物一致性比 res_multistep+simple 稳，无配饰漂移；与 Multishot 官方产线配方、drbaph 社区参考一致）。
+- **H3 无审查链路（2026-09-11 已通）**：LoRA `loras/NaughtyTimes_v3_rank64_unpruned.safetensors`（1.23GB，sha256 已验，SexGod1979/NaughtyTimes-MiniMax-H3，rank64）+ 未剪枝底模 `unet/minimax_h3_fl2va-Q4_K_M.gguf`（18.78GB，leejet 转档）。作者说明 LoRA 按**未剪枝**底模训练（含 adaln_proj 张量），挂剪枝底模效果大打折扣——所以 nsfw 时 `_build_h3_workflow(use_lora=True)` 会把 DiT 换成未剪枝版并注入 `LoraLoaderModelOnly`（节点 "300"，插在 H3ModelLoaderAny → BasicGuider 之间，强度 1.0）。⚠️ **leejet 这份 GGUF 原文件头部 KV 是空的**（没有 general.architecture），ComfyUI-GGUF 拒载；本机已修复（补了 `architecture=wan` 等 3 个 KV，脚本 `_downloads/_repair_gguf_layout.py` 留档）。无审查 H3 跳过官方全年龄提示词格式改写。
 - 模型文件在 `E:\ComfyUI_models\`，通过 ComfyUI 的 `extra_model_paths.yaml` 挂载。H3 用 GGUF 量化版 DiT + safetensors 文本编码器（`minimax_h3`）+ video VAE。
 - 详见 memory：`minimax-h3-deployment`、`wan22-i2v-comfyui-deployment`。
 
@@ -165,6 +166,7 @@
 
 ## 下一步方向
 
-- **无审查 LoRA 链路（已完成，2026-09-08）**：两个 LoRA 文件已下载并 sha256 校验通过；i2v 冒烟测试通过（320×320/17帧/54s 出片，LoRA 节点 200/201 注入有效）。⚠️ 踩坑：**注入节点 id 必须用字符串**（"200"/"201"），ComfyUI prompt 验证按字符串键查节点，用 int 键会 400 KeyError。H3 与无审查互斥（nsfw 强制回退 Wan）。待办：真实尺度内容实测（出片质量/身体还原度）。
+- **无审查 LoRA 链路（已完成，2026-09-08）**：两个 LoRA 文件已下载并 sha256 校验通过；i2v 冒烟测试通过（320×320/17帧/54s 出片，LoRA 节点 200/201 注入有效）。⚠️ 踩坑：**注入节点 id 必须用字符串**（"200"/"201"），ComfyUI prompt 验证按字符串键查节点，用 int 键会 400 KeyError。待办：真实尺度内容实测（出片质量/身体还原度）。
+- **H3 无审查链路（已完成，2026-09-11）**：nsfw 不再强制回退 Wan，前端无审查面板「高级」里有模型下拉（Wan/H3）。冒烟测试通过（512×512/56帧/20步 euler+beta，约 5.5 分钟含首次加载 18.8GB 模型）。A/B 实测：euler+beta 14/20 步人物一致性都优于 res_multistep+simple 20 步（后者 2.1s 处凭空出现眼镜、发长漂移）。
 - 近期：跑完高清 seg04~seg10，拼 `final_video_highres.mp4`，和 4K 超分版放一起对比看哪种更耐看。
 - 中期：一致性——人物「自动画角色」（需文生图模型，本机 checkpoints/loras 目前空）、场景参考图、配音（后期）。

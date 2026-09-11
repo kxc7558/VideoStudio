@@ -57,7 +57,7 @@
   "7": {
     "class_type": "KSamplerSelect",
     "inputs": {
-      "sampler_name": "res_multistep"
+      "sampler_name": "euler"
     }
   },
   "8": {
@@ -67,7 +67,7 @@
         "1",
         0
       ],
-      "scheduler": "simple",
+      "scheduler": "beta",
       "steps": 20,
       "denoise": 1.0
     }
