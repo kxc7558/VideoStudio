@@ -11,6 +11,13 @@
 - **意见箱**：界面右下角 💬 按钮吐槽 → `data/feedback/*.json`；`/api/feedback`（POST 用户吐槽 / GET AI 读箱）；用户说「**处理意见箱**」→ 按 `处理意见箱.md` 执行，处理完在 `data/feedback/changelog.md` 记成长日志
 - 意见箱测试：`venv/Scripts/python.exe test_feedback.py --api`（4 项全过为绿）
 
+## 原则：ComfyUI 原生工作流优先（2026-09-11 定）
+
+- **凡 ComfyUI 生态已有节点能做的，一律做成原生工作流 JSON**（`workflows/*.json`），不要用 Python 外挂拼逻辑。理由：节点图可视化可调、社区模板可直接拖用、能力随 ComfyUI 生态免费获得。
+- Python 层（service/）只做三件事：**提交工作流、下载产物、排队编排**。业务规则（LoRA 强度、步数、采样器选择）全部长在工作流 JSON 里，Python 只传参数。
+- 例外：ffmpeg 拼接/字幕烧录（ComfyUI 不擅长成片后期）保持在 Python。
+- 三视图/角色一致性这类「工作流里加节点」的玩法（如 Multiple-angles LoRA 节点、参考图节点）优先在工作流里实现，不写外挂脚本。
+
 ## 运行方式
 
 - 双击 `run.bat`：自动拉起 ComfyUI（`D:\ComfyUI_Wan`，端口 8188）+ 出片台后端（uvicorn，端口 8000）+ 打开浏览器。
