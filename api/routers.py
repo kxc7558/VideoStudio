@@ -23,6 +23,7 @@ from shared.paths import BASE, JUBEN, OUTPUT, UPLOADS, WEB
 from service.workflows import _build_workflow, RESOLUTIONS, DURATIONS, DURATIONS_H3, MODELS, MAX_STEPS, DEFAULT_PROMPT, MODEL_VARIANT
 from service.generation import _run_task, _run_long_task, _generate_single, _finish_all_shots
 from service.oneclick import _oc_stage2, _generate_shot_previews, _pick_best_character_card, _run_oneclick_task
+from service import character as _char
 
 router = APIRouter()
 
@@ -49,11 +50,14 @@ async def oneclick(
     resolution: str = Form("竖屏高清 9:16"),
     seed: int = Form(-1),
     script_file: str = Form(""),
+    character_image: str = Form(""),
 ):
     """一键成片：一个输入框 + 一个按钮的极简入口，其余全自动。
 
     script_file：juben/ 目录下的剧本文件名（可选）。给了剧本就跳过 AI 编剧直接拆镜，
     剧本内容只在本地流转（读文件 → 本地模型），不打印、不落日志。
+    character_image：角色定妆图文件名（可选，来源：直接上传的 /uploads 文件名，
+    或角色库 output/_character_cards/ 下的文件名）。给了就跳过自动抽卡。
     """
     if not comfy.is_ready():
         return JSONResponse({"error": "生成引擎（ComfyUI）未启动，请先启动它"}, 503)
@@ -72,6 +76,11 @@ async def oneclick(
         return JSONResponse({"error": "请先写一句你的想法，或指定剧本文件"}, 400)
     if style not in ("anime", "real"):
         style = "real"
+    # 角色图合法性预检：文件必须真实存在（在 uploads/ 或角色卡目录），否则报错而不是静默回退
+    if character_image.strip():
+        cname = Path(character_image.strip()).name
+        if not (UPLOADS / cname).exists() and not (OUTPUT / "_character_cards" / cname).exists():
+            return JSONResponse({"error": f"角色图 {cname} 不存在，请重新上传或从角色库选择"}, 400)
 
     width, height = RESOLUTIONS.get(resolution, (480, 832))
     if seed < 0:
@@ -81,18 +90,87 @@ async def oneclick(
         task_id, state="queued", msg="排队中…", mode="oneclick", model="wan",
         prompt=(script_file.strip() and f"剧本：{Path(script_file).name}") or idea[:80],
         seed=seed, resolution=resolution, duration="约1.5分钟",
-        style=style,
+        style=style, character_image=character_image.strip(),
         created=int(time.time()),
     )
     threading.Thread(
         target=_run_oneclick_task,
-        args=(task_id, idea.strip(), style, width, height, 81, 20, seed, script_text),
+        args=(task_id, idea.strip(), style, width, height, 81, 20, seed, script_text, character_image.strip()),
         daemon=True,
     ).start()
     return {"task_id": task_id, "seed": seed}
 
 
 # ---- 一键成片的人工审查端点（分镜意见改写 / 单镜重抽 / 换锚 / 成片检查修复 / 通过） ----
+
+
+# ---- 角色卡：描述生成（文生图）→ 选定 → 存角色库 ----
+
+
+@router.post("/api/character/generate")
+def character_generate(
+    desc: str = Form(...),
+    style: str = Form("anime"),
+):
+    """角色描述 → 文生图出 4 张候选（NoobAI-XL）。异步提交，返回 prompt_id 供轮询。"""
+    if not comfy.is_ready():
+        return JSONResponse({"error": "生成引擎（ComfyUI）未启动，请先启动它"}, 503)
+    if not desc.strip():
+        return JSONResponse({"error": "请先写一句角色描述"}, 400)
+    wf = _char.build_card_workflow_from_desc(desc.strip(), style)
+    pid = comfy.submit(wf)
+    return {"prompt_id": pid, "batch": _char.CANDIDATES}
+
+
+@router.get("/api/character/candidates/{prompt_id}")
+def character_candidates(prompt_id: str):
+    """轮询某次角色生成的结果：未完返回 running，完了返回候选图 URL 列表。"""
+    ok, history = comfy.peek_done(prompt_id)
+    if not ok:
+        q = comfy.queue_position(prompt_id)
+        return {"status": "running", "queue": q}
+    images = _char.collect_images(history)
+    if not images:
+        return {"status": "failed", "images": []}
+    saved = _char.store_candidates(prompt_id, images)
+    return {"status": "done", "images": [f"/api/character/file/{Path(p).name}" for p in saved]}
+
+
+@router.get("/api/character/file/{name}")
+def character_file(name: str):
+    """候选/定妆图静态服务（白名单目录，防路径穿越）。"""
+    safe = Path(name).name
+    for d in (OUTPUT / "_character_cards",):
+        f = d / safe
+        if f.exists():
+            return FileResponse(f)
+    return JSONResponse({"error": "文件不存在"}, 404)
+
+
+@router.post("/api/character/save")
+def character_save(
+    image: str = Form(...),
+    name: str = Form(""),
+    desc: str = Form(""),
+):
+    """把选中的候选图（或上传的图）存进角色库，供后续一键成片选用。"""
+    result = _char.save_character_image(image, name, desc)
+    if result.get("error"):
+        return JSONResponse({"error": result["error"]}, 400)
+    return result
+
+
+@router.post("/api/character/upload")
+async def character_upload(image: UploadFile = File(...)):
+    """上传角色定妆图 → 存角色库。与生成的角色同渠道供一键成片选用。"""
+    raw = await image.read()
+    ext = Path(image.filename or "x.png").suffix.lower() or ".png"
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        return JSONResponse({"error": "请上传 png / jpg / webp 图片"}, 400)
+    result = _char.save_uploaded_character(raw, ext)
+    if result.get("error"):
+        return JSONResponse({"error": result["error"]}, 400)
+    return result
 
 
 @router.get("/", response_class=HTMLResponse)

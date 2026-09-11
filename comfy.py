@@ -119,6 +119,36 @@ def wait_done(prompt_id: str, timeout: int = 3600, poll: float = 2.0, should_can
     return False, {"error": "timeout"}
 
 
+def peek_done(prompt_id: str, poll: float = 0.0):
+    """单次查一下任务是否完成。返回 (完成?, history 条目或 None)。不等待。"""
+    try:
+        h = _get(f"/history/{prompt_id}")
+    except Exception:
+        return False, None
+    entry = h.get(prompt_id)
+    if not entry:
+        return False, None
+    status = entry.get("status", {})
+    if status.get("status_str") == "error":
+        return True, entry  # 完成但是错误态，调用方查 status_str
+    if status.get("completed"):
+        return True, entry
+    return False, None
+
+
+def queue_position(prompt_id: str) -> int:
+    """任务在队列中的位置：运行中=0，待跑=第 N 位，不在队列=-1（已完成或不存在）。"""
+    try:
+        q = _get("/queue")
+    except Exception:
+        return -1
+    running = [x[1] for x in q.get("queue_running", [])]
+    if prompt_id in running:
+        return 0
+    pending = [x[1] for x in q.get("queue_pending", [])]
+    return pending.index(prompt_id) + 1 if prompt_id in pending else -1
+
+
 VIDEO_EXT = (".mp4", ".webm", ".avi", ".mov", ".mkv")
 
 
