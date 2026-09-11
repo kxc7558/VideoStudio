@@ -103,7 +103,7 @@ def save_character_image(image_name: str, name: str, desc: str) -> dict:
     card_id = f"char_{uuid.uuid4().hex[:8]}"
     dest = CARD_DIR / f"{card_id}.png"
     shutil.copyfile(src, dest)
-    _register(card_id, name, desc)
+    _register(card_id, name, desc, dest.name)
     return {"character_id": card_id, "image": dest.name, "name": (name or "未命名角色").strip()}
 
 
@@ -113,12 +113,12 @@ def save_uploaded_character(raw: bytes, ext: str) -> dict:
     card_id = f"char_{uuid.uuid4().hex[:8]}"
     dest = CARD_DIR / f"{card_id}{ext}"
     dest.write_bytes(raw)
-    _register(card_id, "", "")
+    _register(card_id, "", "", dest.name)
     return {"character_id": card_id, "image": dest.name}
 
 
-def _register(card_id: str, name: str, desc: str) -> None:
-    """把角色登记进 profiles_store 的 characters 列表（图片与描述分离存储）。"""
+def _register(card_id: str, name: str, desc: str, image: str = "") -> None:
+    """把角色登记进 profiles_store 的 characters 列表（含定妆图文件名，供前端下拉预览）。"""
     data = profiles_store.profiles()
     characters = data.get("characters", [])
     characters.append({
@@ -128,5 +128,6 @@ def _register(card_id: str, name: str, desc: str) -> None:
         "appearance": (desc or "").strip()[:800],
         "wardrobe": "",
         "behavior": "",
+        "image": image,
     })
     profiles_store.save_profiles({"characters": characters, "scenes": data.get("scenes", [])})

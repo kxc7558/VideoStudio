@@ -838,6 +838,7 @@ $('oneclick-btn').addEventListener('click', async () => {
     fd.append('idea', idea);
     fd.append('script_file', scriptFile);
     fd.append('style', $('oneclick-style').value);
+    if (charImage) fd.append('character_image', charImage);
     const r = await fetch('/api/oneclick', { method: 'POST', body: fd });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || '提交失败');
@@ -870,6 +871,141 @@ $('oneclick-btn').addEventListener('click', async () => {
     });
   } catch (e) { /* 后端未就绪时忽略 */ }
 })();
+
+// ===== 角色三来源：自动抽卡 / 角色库 / 描述生成 / 上传 =====
+let charImage = '';   // 选定的角色图文件名（空 = 自动抽卡）；随一键成片提交
+
+$('char-source').addEventListener('change', () => {
+  const v = $('char-source').value;
+  $('char-lib-row').hidden = v !== 'lib';
+  $('char-desc-row').hidden = v !== 'desc';
+  $('char-upload-row').hidden = v !== 'upload';
+  if (v === '') charImage = '';
+  if (v === 'lib') loadCharLib();
+});
+
+async function loadCharLib() {
+  try {
+    const r = await fetch('/api/creative-profiles');
+    const d = await r.json();
+    const sel = $('char-lib-select');
+    sel.innerHTML = '';
+    const chars = d.characters || [];
+    if (!chars.length) {
+      sel.innerHTML = '<option value="">角色库还是空的，先用「按描述生成」造一个</option>';
+      return;
+    }
+    chars.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = (c.name || '未命名') + (c.appearance ? '：' + c.appearance.slice(0, 30) : '');
+      opt.dataset.image = c.image || '';
+      sel.appendChild(opt);
+    });
+    sel.onchange = () => {
+      const opt = sel.selectedOptions[0];
+      const img = opt ? (opt.dataset.image || '') : '';
+      if (img) {
+        $('char-lib-preview').src = '/api/character/file/' + img.split(/[\\/]/).pop();
+        $('char-lib-preview').hidden = false;
+        charImage = img.split(/[\\/]/).pop();
+      } else { charImage = ''; }
+    };
+    sel.onchange();
+  } catch (e) { /* 忽略 */ }
+}
+
+// 描述生成候选
+let charCandidates = [];   // [{file}] 当前候选
+$('char-gen-btn').addEventListener('click', async () => {
+  const desc = $('char-desc').value.trim();
+  if (!desc) { alert('先写一句角色描述'); return; }
+  $('char-gen-btn').disabled = true;
+  $('char-gen-status').textContent = '生成中（约 1~2 分钟）…';
+  $('char-candidates').innerHTML = '';
+  try {
+    const r = await fetch('/api/character/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'desc=' + encodeURIComponent(desc) + '&style=' + $('oneclick-style').value,
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || '提交失败');
+    pollCharCandidates(d.prompt_id);
+  } catch (e) {
+    $('char-gen-status').textContent = '失败：' + (e.message || e);
+    $('char-gen-btn').disabled = false;
+  }
+});
+
+async function pollCharCandidates(pid) {
+  for (let i = 0; i < 120; i++) {
+    await new Promise(res => setTimeout(res, 5000));
+    try {
+      const r = await fetch('/api/character/candidates/' + pid);
+      const d = await r.json();
+      if (d.status === 'running') { $('char-gen-status').textContent = `排队/生成中（${i * 5}s）…`; continue; }
+      if (d.status === 'failed') { $('char-gen-status').textContent = '生成失败，请重试'; $('char-gen-btn').disabled = false; return; }
+      charCandidates = d.images || [];
+      $('char-gen-status').textContent = '点选一张喜欢的作为主角：';
+      const grid = $('char-candidates');
+      grid.innerHTML = '';
+      charCandidates.forEach(f => {
+        const btn = document.createElement('button');
+        btn.className = 'char-cand';
+        btn.type = 'button';
+        const img = document.createElement('img');
+        img.src = f;
+        btn.appendChild(img);
+        btn.addEventListener('click', () => selectCandidate(f, btn));
+        grid.appendChild(btn);
+      });
+      $('char-gen-btn').disabled = false;
+      return;
+    } catch (e) { /* 轮询失败继续 */ }
+  }
+  $('char-gen-status').textContent = '等待超时，请重试';
+  $('char-gen-btn').disabled = false;
+}
+
+async function selectCandidate(url, btn) {
+  document.querySelectorAll('.char-cand').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+  const file = url.split('/').pop();
+  // 存进角色库（带描述），后续任务都能复用
+  try {
+    const r = await fetch('/api/character/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'image=' + encodeURIComponent(file) + '&name=' + encodeURIComponent('角色 ' + new Date().toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })) + '&desc=' + encodeURIComponent($('char-desc').value.trim()),
+    });
+    const d = await r.json();
+    charImage = d.image ? d.image.split(/[\\/]/).pop() : file;
+    $('char-gen-status').textContent = '✅ 已选定并收入角色库';
+  } catch (e) {
+    charImage = file;  // 存库失败不挡出片，用原始候选图
+    $('char-gen-status').textContent = '已选定（存库失败，本次有效）';
+  }
+}
+
+// 上传角色图
+$('char-upload-btn').addEventListener('click', () => $('char-upload-input').click());
+$('char-upload-input').addEventListener('change', async () => {
+  const f = $('char-upload-input').files[0];
+  if (!f) return;
+  $('char-upload-status').textContent = '上传中…';
+  const fd = new FormData();
+  fd.append('image', f);
+  try {
+    const r = await fetch('/api/character/upload', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || '上传失败');
+    charImage = d.image.split(/[\\/]/).pop();
+    $('char-upload-status').textContent = '✅ 已上传：' + charImage;
+  } catch (e) {
+    $('char-upload-status').textContent = '失败：' + (e.message || e);
+  }
+});
 
 // ===== 无审查区：本地拆剧本 + 连续成片（全程不碰云端） =====
 $('nsfw-split-btn').addEventListener('click', nsfwSplitStory);

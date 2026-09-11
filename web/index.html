@@ -119,6 +119,34 @@
           </select>
           <button id="oneclick-btn" class="generate">🚀 一键成片</button>
         </div>
+        <div class="nsfw-options">
+          <label>👤 角色（可选）：不指定则自动抽卡决定主角长相</label>
+          <div class="oneclick-row">
+            <select id="char-source">
+              <option value="">🎲 自动抽卡（全自动）</option>
+              <option value="lib">📚 从角色库选</option>
+              <option value="desc">✍️ 按描述生成新角色</option>
+              <option value="upload">🖼️ 上传角色图</option>
+            </select>
+          </div>
+          <div id="char-lib-row" class="oneclick-row" hidden>
+            <select id="char-lib-select"><option value="">加载中…</option></select>
+            <img id="char-lib-preview" alt="" hidden style="max-height:80px;border-radius:8px">
+          </div>
+          <div id="char-desc-row" hidden>
+            <textarea id="char-desc" rows="2" placeholder="例如：银发挑染的女店员，20岁，便利店制服，清瘦，眼神慵懒（动漫模型，写英文更准）"></textarea>
+            <div class="oneclick-row">
+              <button id="char-gen-btn" class="generate">🎨 生成 4 张候选</button>
+              <span id="char-gen-status" class="nsfw-hint"></span>
+            </div>
+            <div id="char-candidates" class="char-cand-grid"></div>
+          </div>
+          <div id="char-upload-row" hidden>
+            <input type="file" id="char-upload-input" accept="image/*" hidden>
+            <button id="char-upload-btn" class="generate">🖼️ 选择图片上传</button>
+            <span id="char-upload-status" class="nsfw-hint"></span>
+          </div>
+        </div>
         <div id="oneclick-result" class="nsfw-hint"></div>
       </div>
       <details class="nsfw-advanced">

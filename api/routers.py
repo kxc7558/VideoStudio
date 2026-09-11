@@ -2,6 +2,8 @@
 """接口层：全部 HTTP 路由。只做参数校验 + 调 service，不写业务规则。"""
 import json
 import random
+import re
+import subprocess
 import threading
 import time
 import uuid
@@ -17,13 +19,18 @@ import ai
 import comfy
 import storyboard
 from db import profiles_store, tasks_store
-from db.tasks_store import tasks, _lock, update as _update, task_or_none as _task_or_none
+from db.tasks_store import tasks, _lock, update as _update, task_or_none as _task_or_none, meta_dict as _meta_dict
 from shared import ffmpeg_tools
-from shared.paths import BASE, JUBEN, OUTPUT, UPLOADS, WEB
+from shared.ffmpeg_tools import concat_videos, extract_last_frame
+from shared.paths import BASE, JUBEN, OUTPUT, UPLOADS, WEB, FFMPEG
 from service.workflows import _build_workflow, RESOLUTIONS, DURATIONS, DURATIONS_H3, MODELS, MAX_STEPS, DEFAULT_PROMPT, MODEL_VARIANT
 from service.generation import _run_task, _run_long_task, _generate_single, _finish_all_shots
 from service.oneclick import _oc_stage2, _generate_shot_previews, _pick_best_character_card, _run_oneclick_task
 from service import character as _char
+from service.review import _rebuild_and_concat
+
+_profiles = profiles_store.profiles
+_save_profiles = profiles_store.save_profiles
 
 router = APIRouter()
 
@@ -558,8 +565,7 @@ def _apply_creative(prompt: str, creative: dict, shot_note: str = "") -> str:
     pieces = [p for p in (brief, shot_note.strip(), prompt.strip()) if p]
     return "\n".join(pieces)
 
-# 拼接视频用的 ffmpeg（复用 ComfyUI 自带的二进制，避免再下载）
-FFMPEG = r"D:\ComfyUI_Wan\venv\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe"
+# 拼接视频用的 ffmpeg 路径已统一在 shared.paths.FFMPEG（import 进来）
 
 
 

@@ -6,7 +6,7 @@ from shared.paths import CREATIVE_PROFILES
 
 FIELDS = {
     "scenes": ("id", "name", "place", "era", "atmosphere", "lighting", "palette", "camera"),
-    "characters": ("id", "name", "identity", "appearance", "wardrobe", "behavior"),
+    "characters": ("id", "name", "identity", "appearance", "wardrobe", "behavior", "image"),
 }
 
 

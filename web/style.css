@@ -215,3 +215,9 @@ select { width: 100%; padding: 12px; background: var(--panel); border: 1px solid
 .review-shot-cn { font-size: 13px; line-height: 1.6; margin-bottom: 3px; }
 .review-shot details { margin: 4px 0 8px; }
 .review-shot summary { cursor: pointer; color: var(--muted); font-size: 12px; -webkit-user-select: none; user-select: none; }
+
+/* 角色三来源区 */
+.char-cand-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
+.char-cand { cursor: pointer; border: 2px solid transparent; border-radius: 10px; overflow: hidden; background: #121621; padding: 0; }
+.char-cand img { width: 100%; display: block; }
+.char-cand.sel { border-color: #6d7cff; }
