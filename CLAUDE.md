@@ -48,7 +48,20 @@
 - **MiniMax H3**：单模型（FL2VA），同时支持 t2v 和 i2v（首帧）。帧网格 17k+5 @ 24fps，时长帧数 56/73/124 ≈ 2.3/3.0/5.2 秒（**不是** Wan 的 4n+1 规则）。采样配方 **euler + beta + 20 步**（2026-09-11 A/B 实测胜出：人物一致性比 res_multistep+simple 稳，无配饰漂移；与 Multishot 官方产线配方、drbaph 社区参考一致）。
 - **H3 无审查链路（2026-09-11 已通）**：LoRA `loras/NaughtyTimes_v3_rank64_unpruned.safetensors`（1.23GB，sha256 已验，SexGod1979/NaughtyTimes-MiniMax-H3，rank64）+ 未剪枝底模 `unet/minimax_h3_fl2va-Q4_K_M.gguf`（18.78GB，leejet 转档）。作者说明 LoRA 按**未剪枝**底模训练（含 adaln_proj 张量），挂剪枝底模效果大打折扣——所以 nsfw 时 `_build_h3_workflow(use_lora=True)` 会把 DiT 换成未剪枝版并注入 `LoraLoaderModelOnly`（节点 "300"，插在 H3ModelLoaderAny → BasicGuider 之间，强度 1.0）。⚠️ **leejet 这份 GGUF 原文件头部 KV 是空的**（没有 general.architecture），ComfyUI-GGUF 拒载；本机已修复（补了 `architecture=wan` 等 3 个 KV，脚本 `_downloads/_repair_gguf_layout.py` 留档）。无审查 H3 跳过官方全年龄提示词格式改写。
 - 模型文件在 `E:\ComfyUI_models\`，通过 ComfyUI 的 `extra_model_paths.yaml` 挂载。H3 用 GGUF 量化版 DiT + safetensors 文本编码器（`minimax_h3`）+ video VAE。
+- **角色卡文生图**：`checkpoints/NoobAI-XL-v1.0.safetensors`（SDXL 系动漫模型，D 盘 ComfyUI models），工作流 `workflows/anchor_t2i_api.json`（832×1216、28 步、euler_ancestral、cfg 5）。描述生成角色时补质量词 + 负向防真人词。
 - 详见 memory：`minimax-h3-deployment`、`wan22-i2v-comfyui-deployment`。
+
+## 角色三来源（2026-09-11 上线）
+
+一键成片的角色不指定时自动抽卡；也可四选一（前端「👤 角色」下拉）：
+1. **自动抽卡**（默认）：4 候选 t2v 迷你视频 → 视觉模型选最清晰 → 抽尾帧当锚
+2. **角色库选**：`output/_character_cards/` 下的定妆图（描述生成/上传的都存这里），下拉选 + 预览
+3. **按描述生成**：一句话 → NoobAI 文生图 4 候选 → 点选 → 自动存角色库（复用）
+4. **上传图**：任意 png/jpg/webp → 存角色库
+
+- 后端：`service/character.py`（文生图候选/存库）+ `_resolve_character_anchor`（三来源统一解析，外部图跳过抽卡直接当锚）；API 五端点 `/api/character/{generate,candidates,file,save,upload}`；`/api/oneclick` 收 `character_image`（文件名，预检存在性防路径穿越）。
+- 锚统一写任务 meta：`character_card`（`ext:文件名` = 外部锚 / 段 id = 抽卡锚）+ `card_desc`（视觉模型描述，逐镜前置保一致）。
+- 角色库登记在 `data/creative_profiles.json` 的 characters（白名单字段含 `image`）。
 
 ## 长视频（首尾帧）
 
@@ -136,6 +149,7 @@
 
 ## 关键踩坑（非显而易见，改代码前必读）
 
+- **⚠️ 分层迁移回归（2026-09-11 修）**：迁移把单文件拆进 service/api 时，`_update`/`tasks`/`_lock`/`_cancelled`/`concat_videos`/`extract_last_frame`/`FFMPEG`/`_profiles` 等名字只 import 了模块没绑进文件命名空间——**所有真实生成路径一跑即 NameError**。已全部补显式 import（generation/oneclick/review/routers 四个文件）。教训：**拆文件后必须对每个新文件做「未定义名字静态扫描」+ 真实引擎端到端回归**，光 import 不报错不代表能跑。
 - **SaveVideo 输出在 history 的 `images` 键**（不是 `videos`），带 `animated:[true]`；找视频要同时查 `videos` 和 `images` 两键并按扩展名过滤（`comfy.py:find_video`）。
 - **GGUF 模型列表**用 `/object_info/UnetLoaderGGUF` 的 `input.required.unet_name[0]`（`/models/unet` 是 404）。H3 同理用 `/object_info/H3ModelLoaderAny`。
 - **storyboard 的 SYSTEM 提示词含 JSON 花括号**，`.format()` 会当占位符抛 KeyError → 用 `%` 格式化。
