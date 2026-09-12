@@ -48,10 +48,12 @@ PROMPT_TMPL = (
     "Live-action documentary style, cinematic. The speaker from <Picture 1> stands at a wooden podium "
     "with two gooseneck microphones in a modern conference hall with dark blue stage backdrop, warm stage lights. "
     "He delivers his speech in Chinese with natural lip-sync, calm authoritative manner, subtle natural gestures. "
-    "He speaks the exact words heard in <Audio 1>. His face, thin round metal glasses, dark suit, white shirt and "
-    "grey-streaked side-parted hair stay exactly consistent with <Picture 1> throughout. "
-    "overall_soundscape: quiet conference room tone, his clear steady male voice speaking the words of <Audio 1>. "
-    "non_diegetic_music: N/A. Static camera with very small drift. Sharp focus, fine detail."
+    "He speaks the exact words heard in <Audio 1>, continuing those same words to the very end of the shot — "
+    "he never switches language, never mumbles, never falls silent. "
+    "His face, thin round metal glasses, dark suit, white shirt and grey-streaked side-parted hair stay exactly "
+    "consistent with <Picture 1> throughout. "
+    "overall_soundscape: quiet conference room tone, his clear steady male voice speaking the words of <Audio 1> "
+    "for the entire duration. non_diegetic_music: N/A. Static camera with very small drift. Sharp focus, fine detail."
 )
 
 
@@ -106,7 +108,7 @@ def build_shots() -> list:
 
 
 def tts_shot(i: int, text: str) -> tuple:
-    """TTS 单镜 → (wav_path, dur)。幂等。"""
+    """TTS 单镜 → (wav_path, dur)。幂等。音频恒补 0.7s 静音尾巴（必须 ≥ 视频时长）。"""
     TTS_DIR.mkdir(exist_ok=True)
     mp3 = TTS_DIR / f"t{i:03d}.mp3"
     wav = TTS_DIR / f"t{i:03d}.wav"
@@ -121,10 +123,21 @@ def tts_shot(i: int, text: str) -> tuple:
     if not wav.exists():
         subprocess.run([FFMPEG, "-y", "-i", str(mp3), "-ar", "32000", "-ac", "1", str(wav)],
                        capture_output=True, timeout=120)
-    r = subprocess.run([FFMPEG, "-i", str(wav)], capture_output=True, text=True)
+    # 恒定补静音：无论首次还是复用，pad 文件每次检查补齐
+    padded = TTS_DIR / f"t{i:03d}_pad.wav"
+    if not padded.exists():
+        r0 = subprocess.run([FFMPEG, "-i", str(wav)], capture_output=True, text=True)
+        m0 = re.search(r"Duration: (\d+):(\d+):([\d.]+)", r0.stderr)
+        d0 = int(m0.group(1)) * 3600 + int(m0.group(2)) * 60 + float(m0.group(3)) if m0 else 0.0
+        pad_to = max(0.0, 5.5 - d0)   # 目标 5.5s：比 124帧(5.17s) 长 0.33s，模型全程有语音可依
+        subprocess.run(
+            [FFMPEG, "-y", "-i", str(wav), "-af", f"apad=pad_dur={pad_to:.2f}", str(padded)],
+            capture_output=True, timeout=120,
+        )
+    r = subprocess.run([FFMPEG, "-i", str(padded)], capture_output=True, text=True)
     m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", r.stderr)
     dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)) if m else 0.0
-    return wav, round(dur, 2)
+    return padded, round(dur, 2)
 
 
 def upload_ref() -> str:
@@ -188,16 +201,23 @@ def stage_videos(start: int, limit: int, shots: list) -> None:
         text = shots[i]
         wav, dur = tts_shot(i, text)
         wf = build_workflow(PROMPT_TMPL, SEED_BASE + i, ref_img, wav)
-        pid = comfy.submit(wf)
-        log(f"镜 {i + 1}/{len(shots)} 提交（{len(text)} 字 / TTS {dur:.1f}s）…")
-        ok, history = comfy.wait_done(pid, timeout=5400)
-        if not ok:
-            log(f"镜 {i:03d} 失败，跳过（重跑补齐）")
-            continue
-        v = comfy.find_video(history)
-        if v:
-            comfy.download_video(v, seg)
-            log(f"镜 {i:03d} 完成")
+        # OOM 高发（8GB 显存临界），失败自动重试最多 3 次（每次重新提交，显存状态独立）
+        success = False
+        for attempt in range(3):
+            pid = comfy.submit(wf)
+            log(f"镜 {i + 1}/{len(shots)} 提交（{len(text)} 字 / TTS {dur:.1f}s / attempt {attempt + 1}）…")
+            ok, history = comfy.wait_done(pid, timeout=5400)
+            if ok:
+                v = comfy.find_video(history)
+                if v:
+                    comfy.download_video(v, seg)
+                    log(f"镜 {i:03d} 完成")
+                    success = True
+                    break
+            log(f"镜 {i:03d} attempt {attempt + 1} 失败（多为 OOM），等 20s 重试")
+            time.sleep(20)
+        if not success:
+            log(f"镜 {i:03d} 三次失败，跳过（--start {i} 补跑）")
 
 
 def stage_final(shots: list) -> None:
@@ -206,12 +226,15 @@ def stage_final(shots: list) -> None:
     if not have:
         log("没有任何段，无法拼接")
         return
-    # 字幕：有视频的镜按顺序排时间轴（5.17s/镜）
+    # 字幕：有视频的镜按顺序排时间轴（时长按真实段时长读取）
     lines = []
-    seg_dur = LENGTH / 24.0
-    for n, (i, _) in enumerate(have):
-        start = n * seg_dur
-        lines.append(f"{n + 1}\n{_ts(start)} --> {_ts(start + seg_dur - 0.15)}\n{shots[i]}\n")
+    cursor = 0.0
+    for n, (i, p) in enumerate(have):
+        r = subprocess.run([FFMPEG, "-i", str(p)], capture_output=True, text=True)
+        m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", r.stderr)
+        d = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)) if m else 5.17
+        lines.append(f"{n + 1}\n{_ts(cursor)} --> {_ts(cursor + d - 0.15)}\n{shots[i]}\n")
+        cursor += d
     SUBS.write_text("\n".join(lines), encoding="utf-8")
     # concat（各段自带音轨）
     list_file = OUTPUT / "_kangbo2_concat.txt"
