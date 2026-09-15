@@ -40,11 +40,12 @@ def uncensored_ready() -> bool:
         return False
 
 
-def uncensored_text(system: str, user: str) -> str:
+def uncensored_text(system: str, user: str, max_tokens: int = 2048) -> str:
     """用本地无审查模型写提示词；失败返回空串（调用方回退原提示词）。
 
     think=False 关思考：加速且避免输出带 reasoning 前缀冲淡结果。
     timeout 1800s：27B 冷启动（首次加载 14GB 进内存）可能 10+ 分钟。
+    max_tokens：输出上限。长剧本提炼结构化数据（如故事圣经）需调大，否则 JSON 被截断。
     """
     try:
         payload = {
@@ -54,7 +55,7 @@ def uncensored_text(system: str, user: str) -> str:
             "stream": False,
             "temperature": 0.7,
             "think": False,
-            "options": {"num_predict": 2048},
+            "options": {"num_predict": max_tokens},
         }
         r = httpx.post(OLLAMA_GEN, json=payload, timeout=1800)
         r.raise_for_status()
