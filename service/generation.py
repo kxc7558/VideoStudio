@@ -202,6 +202,29 @@ def _generate_single(task_id, mode, image_name, prompt, seed, width, height, len
     return True, dest
 
 
+def generate_h3_shot(task_id, prompt, seed, width, height, length, steps=20, nsfw=True,
+                     image_name=None, last_frame_name=None, timeout=3600):
+    """生成单个 H3 镜头并下载到 output/{task_id}.mp4，返回 (成功?, 路径)。
+
+    供导演管线等本地产线调用。nsfw=True 走无审查链路（未剪枝底模 + NaughtyTimes LoRA）。
+    有 image_name 走 i2v（首帧），否则 t2v；last_frame_name 可选（首尾帧过渡）。
+    帧数须落在 H3 网格 17k+5（56/73/124…）。
+    """
+    mode = "i2v" if image_name else "t2v"
+    wf = _build_workflow("h3", mode, image_name, prompt, seed, width, height, length,
+                         task_id, steps, last_frame_name, use_lora=nsfw)
+    pid = comfy.submit(wf)
+    ok, history = comfy.wait_done(pid, timeout=timeout, should_cancel=lambda: _cancelled(task_id))
+    if not ok:
+        return False, None
+    video = comfy.find_video(history)
+    if not video:
+        return False, None
+    dest = OUTPUT / f"{task_id}.mp4"
+    comfy.download_video(video, dest)
+    return True, dest
+
+
 def _finish_all_shots(task_id, shots):
     """全部镜头通过后：把各段按顺序拼接成片，进成片审查（awaiting_review/final）。"""
     seg_videos = [OUTPUT / f"{task_id}_s{i}.mp4" for i in range(len(shots))]

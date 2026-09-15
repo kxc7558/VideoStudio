@@ -152,12 +152,19 @@ def _deepseek(system: str, user: str) -> str:
     return r.json()["choices"][0]["message"]["content"].strip()
 
 
-def h3_prompt(plain: str, mode: str = "t2v", seconds: float = 5.0) -> str:
-    """把普通提示词改写成 MiniMax H3 官方格式；失败返回空串（调用方回退原提示词）。"""
+def h3_prompt(plain: str, mode: str = "t2v", seconds: float = 5.0, local: bool = False, extra_rules: str = "") -> str:
+    """把普通提示词改写成 MiniMax H3 官方格式；失败返回空串（调用方回退原提示词）。
+
+    local=True 走本地 uncensored 模型（无审查内容不外发）。
+    extra_rules 追加题材镜头语言（导演管线用）。
+    """
+    writer = _writer(local)
+    system = "你是资深视频提示词工程师，精通 MiniMax H3 官方提示词格式。\n\n" + _H3_RULES + "\n\n" + _DETAIL_RULES
+    if extra_rules:
+        system += "\n\n" + extra_rules
     try:
-        return _deepseek(
-            "你是资深视频提示词工程师，精通 MiniMax H3 官方提示词格式。\n\n"
-            + _H3_RULES + "\n\n" + _DETAIL_RULES,
+        return writer(
+            system,
             f"要生成的模式是 {mode}（t2v=文生 / i2v=首帧图生 / fl2v=首尾帧），视频时长约 {seconds:.2f} 秒。\n"
             f"用户原始想法：「{plain}」。\n"
             "请严格按上述官方格式输出完整的 H3 提示词。只输出提示词本身，不要解释、不要引号。",
