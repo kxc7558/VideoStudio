@@ -272,12 +272,15 @@ def main():
         if not plain:
             continue
         log(f"③ 第 {i + 1}/{len(shots)} 镜：写 H3 提示词…")
-        h3_text = ai.h3_prompt(plain, "t2v", seconds, local=True, extra_rules=genre_body[:1200])
+        # 题材镜头语言 + 故事圣经一起喂给提示词改写（人物/场景一致性写在提示词里）
+        rules = genre_body[:900]
+        if brief:
+            rules = f"{rules}\n\n【故事圣经·全片一致】\n{brief[:900]}"
+        h3_text = ai.h3_prompt(plain, "t2v", seconds, local=True, extra_rules=rules)
         if not h3_text:
             h3_text = plain  # 改写失败退回原始提示词
-        # 故事圣经前置（保人物/场景一致）
-        if brief:
-            h3_text = f"{h3_text}\n\n[Continuity] {brief[:600]}"
+        elif brief:
+            h3_text = f"{h3_text}\n\n[Continuity] {brief[:400]}"
 
         log(f"④ 第 {i + 1}/{len(shots)} 镜：出片中（{args.width}×{args.height}/{args.length}帧/{args.steps}步）…")
         ok, _ = generate_h3_shot(
@@ -285,6 +288,7 @@ def main():
             prompt=h3_text, seed=20260915 + i,
             width=args.width, height=args.height, length=args.length,
             steps=args.steps, nsfw=not args.no_nsfw,
+            timeout=7200,   # 124 帧 ≈ 52 分钟/镜，留足余量（机器有负载时更慢）
         )
         produced = OUTPUT / f"director_{script_path.stem}_{i:02d}.mp4"
         if ok and produced.exists():

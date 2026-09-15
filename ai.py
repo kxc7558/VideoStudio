@@ -40,14 +40,18 @@ def uncensored_ready() -> bool:
         return False
 
 
-def uncensored_text(system: str, user: str, max_tokens: int = 2048) -> str:
+def uncensored_text(system: str, user: str, max_tokens: int = 2048, num_ctx: int = 16384) -> str:
     """用本地无审查模型写提示词；失败返回空串（调用方回退原提示词）。
 
     think=False 关思考：加速且避免输出带 reasoning 前缀冲淡结果。
     timeout 1800s：27B 冷启动（首次加载 14GB 进内存）可能 10+ 分钟。
     max_tokens：输出上限。长剧本提炼结构化数据（如故事圣经）需调大，否则 JSON 被截断。
+    num_ctx：上下文窗口。⚠️ Ollama 默认仅 8192 token——长输入（>8000 字）会把窗口占满，
+    输出被静默截断（done_reason=length）。长输入务必显式调大（如 16384）。
     """
     try:
+        opts = {"num_predict": max_tokens}
+        opts["num_ctx"] = num_ctx or 16384
         payload = {
             "model": UNCENSORED_MODEL,
             "system": system,
@@ -55,7 +59,7 @@ def uncensored_text(system: str, user: str, max_tokens: int = 2048) -> str:
             "stream": False,
             "temperature": 0.7,
             "think": False,
-            "options": {"num_predict": max_tokens},
+            "options": opts,
         }
         r = httpx.post(OLLAMA_GEN, json=payload, timeout=1800)
         r.raise_for_status()
