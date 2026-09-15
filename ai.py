@@ -40,7 +40,7 @@ def uncensored_ready() -> bool:
         return False
 
 
-def uncensored_text(system: str, user: str, max_tokens: int = 2048, num_ctx: int = 16384) -> str:
+def uncensored_text(system: str, user: str, max_tokens: int = 2048, num_ctx: int = 16384, keep_alive=None) -> str:
     """用本地无审查模型写提示词；失败返回空串（调用方回退原提示词）。
 
     think=False 关思考：加速且避免输出带 reasoning 前缀冲淡结果。
@@ -48,6 +48,8 @@ def uncensored_text(system: str, user: str, max_tokens: int = 2048, num_ctx: int
     max_tokens：输出上限。长剧本提炼结构化数据（如故事圣经）需调大，否则 JSON 被截断。
     num_ctx：上下文窗口。⚠️ Ollama 默认仅 8192 token——长输入（>8000 字）会把窗口占满，
     输出被静默截断（done_reason=length）。长输入务必显式调大（如 16384）。
+    keep_alive：模型驻留时长（秒）。传 0 让模型用完立即卸载——与视频模型共用本机内存时
+    必须这么做（27B 文本 ~17GB + 视频模型 ~18GB 会超 32GB 内存）。
     """
     try:
         opts = {"num_predict": max_tokens}
@@ -61,6 +63,8 @@ def uncensored_text(system: str, user: str, max_tokens: int = 2048, num_ctx: int
             "think": False,
             "options": opts,
         }
+        if keep_alive is not None:
+            payload["keep_alive"] = keep_alive
         r = httpx.post(OLLAMA_GEN, json=payload, timeout=1800)
         r.raise_for_status()
         return r.json().get("response", "").strip()

@@ -237,19 +237,54 @@ def main():
         log(f"✅ 只出计划：故事圣经 {bible_file.name}｜分镜 {shots_file.name}（{len(shots)} 镜）")
         return
 
+    # 阶段③：集中写完所有 H3 提示词（qwen 用完立即卸载，把内存让给视频模型）
+    seconds = args.length / 24.0
+    prompts_file = work / "h3_prompts.json"
+    if prompts_file.exists():
+        h3_prompts = json.loads(prompts_file.read_text(encoding="utf-8"))
+        log(f"③ 复用已有 H3 提示词（{len(h3_prompts)} 条）")
+    else:
+        log(f"③ 本地 qwen3.8 集中写 {len(shots)} 镜的 H3 提示词（写完自动卸载模型）…")
+        h3_prompts = []
+        for i, shot in enumerate(shots):
+            plain = str(shot.get("prompt", "")).strip()
+            if not plain:
+                h3_prompts.append("")
+                continue
+            rules = genre_body[:900]
+            if brief:
+                rules = f"{rules}\n\n【故事圣经·全片一致】\n{brief[:900]}"
+            log(f"   第 {i + 1}/{len(shots)} 镜提示词…")
+            txt = ai.h3_prompt(plain, "t2v", seconds, local=True, extra_rules=rules)
+            if not txt:
+                txt = plain
+            elif brief:
+                txt = f"{txt}\n\n[Continuity] {brief[:400]}"
+            h3_prompts.append(txt)
+        prompts_file.write_text(json.dumps(h3_prompts, ensure_ascii=False, indent=2), encoding="utf-8")
+        log(f"③ H3 提示词完成（{len(h3_prompts)} 条）")
+        # 卸载 qwen，把内存/显存让给 H3
+        try:
+            import httpx
+            httpx.post("http://127.0.0.1:11434/api/generate",
+                       json={"model": ai.UNCENSORED_MODEL, "keep_alive": 0}, timeout=30)
+            log("   已卸载本地编剧模型（释放内存给视频模型）")
+        except Exception:
+            pass
+
     if not comfy.is_ready():
         log("❌ ComfyUI 未启动（8188）")
         sys.exit(1)
 
-    # 阶段③④：逐镜出片（H3 官方格式提示词 + 无审查链路）
-    seconds = args.length / 24.0
+    # 阶段④：逐镜出片（H3 独占内存）
     segs = []
     for i, shot in enumerate(shots):
+        seg = work / f"seg_{i:02d}.mp4"
+        if seg.exists():
+            segs.append(seg)
+            continue
         if i < args.start:
-            seg = work / f"seg_{i:02d}.mp4"
-            if seg.exists():
-                segs.append(seg)
-                continue
+            continue
         ctrl = control_state()
         if ctrl == "STOP":
             log("⏹ 控制文件为 STOP，停止")
@@ -263,25 +298,9 @@ def main():
         if ctrl == "STOP":
             break
 
-        seg = work / f"seg_{i:02d}.mp4"
-        if seg.exists():
-            segs.append(seg)
-            continue
-
-        plain = str(shot.get("prompt", "")).strip()
-        if not plain:
-            continue
-        log(f"③ 第 {i + 1}/{len(shots)} 镜：写 H3 提示词…")
-        # 题材镜头语言 + 故事圣经一起喂给提示词改写（人物/场景一致性写在提示词里）
-        rules = genre_body[:900]
-        if brief:
-            rules = f"{rules}\n\n【故事圣经·全片一致】\n{brief[:900]}"
-        h3_text = ai.h3_prompt(plain, "t2v", seconds, local=True, extra_rules=rules)
+        h3_text = (h3_prompts[i] if i < len(h3_prompts) else "") or str(shot.get("prompt", "")).strip()
         if not h3_text:
-            h3_text = plain  # 改写失败退回原始提示词
-        elif brief:
-            h3_text = f"{h3_text}\n\n[Continuity] {brief[:400]}"
-
+            continue
         log(f"④ 第 {i + 1}/{len(shots)} 镜：出片中（{args.width}×{args.height}/{args.length}帧/{args.steps}步）…")
         ok, _ = generate_h3_shot(
             task_id=f"director_{script_path.stem}_{i:02d}",
