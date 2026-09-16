@@ -273,17 +273,22 @@ def main():
         log(f"✅ 只出资产：{assets_file.relative_to(OUTPUT)}（人工选定后去掉 --assets-only 再跑）")
         return
 
-    # 参考图：选定的人物卡上传给 ComfyUI，全片每镜都用它做「全程注意力」
-    ref_comfy_name = ""
+    # 参考图：人物卡全程使用；场景卡按镜头所属场景匹配（避免不同场景互相干扰）
+    char_refs = []          # [comfy 文件名]，全片每镜都带
+    scene_refs = {}         # {场景名: comfy 文件名}
     if manifest and not args.no_ref:
-        pick = assets_mod.pick_reference(manifest, "characters", 0)
-        if pick:
-            try:
-                ref_comfy_name = comfy.upload_image(OUTPUT / pick)
-                log(f"②.5 参考图已就位：{Path(pick).name} → 全片 Ref2VA 锁定")
-            except Exception as e:  # noqa: BLE001
-                log(f"⚠️ 参考图上传失败（{type(e).__name__}），退回 t2v")
-                ref_comfy_name = ""
+        try:
+            for c in manifest.get("characters", []):
+                files = c.get("files") or []
+                if files:
+                    char_refs.append(comfy.upload_image(OUTPUT / files[0]))
+            for s in manifest.get("scenes", []):
+                if s.get("file"):
+                    scene_refs[s.get("name", "")] = comfy.upload_image(OUTPUT / s["file"])
+            log(f"②.5 参考图就位：{len(char_refs)} 人物 + {len(scene_refs)} 场景 → 全片 Ref2VA 锁定")
+        except Exception as e:  # noqa: BLE001
+            log(f"⚠️ 参考图上传失败（{type(e).__name__}），退回 t2v")
+            char_refs, scene_refs = [], {}
 
     # 阶段③：集中写完所有 H3 提示词（qwen 用完立即卸载，把内存让给视频模型）
     seconds = args.length / 24.0
@@ -347,6 +352,9 @@ def main():
             break
 
         h3_text = (h3_prompts[i] if i < len(h3_prompts) else "") or str(shot.get("prompt", "")).strip()
+        # 本镜参考图 = 全部人物卡 + 该镜所属场景卡（按场景名出现在镜头 scene 文本里匹配）
+        shot_scene = str(shot.get("scene", "")) + str(shot.get("narration", ""))
+        shot_refs = list(char_refs) + [v for k, v in scene_refs.items() if k and k in shot_scene]
         if not h3_text:
             continue
         log(f"④ 第 {i + 1}/{len(shots)} 镜：出片中（{args.width}×{args.height}/{args.length}帧/{args.steps}步）…")
@@ -355,7 +363,7 @@ def main():
             prompt=h3_text, seed=20260915 + i,
             width=args.width, height=args.height, length=args.length,
             steps=args.steps, nsfw=not args.no_nsfw,
-            ref_image_name=ref_comfy_name or None,   # Ref2VA：参考图全程注意力锁人物/场景
+            ref_image_names=shot_refs or None,   # Ref2VA：人物全程 + 本镜场景，全程注意力锁定
             timeout=7200,   # 124 帧 ≈ 52 分钟/镜，留足余量（机器有负载时更慢）
         )
         produced = OUTPUT / f"director_{script_path.stem}_{i:02d}.mp4"

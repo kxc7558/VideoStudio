@@ -142,7 +142,7 @@ def _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, t
     return wf
 
 
-def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name=None, use_lora=False, ref_image_name=None, ref_strength=None):
+def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name=None, use_lora=False, ref_image_name=None, ref_strength=None, ref_image_names=None):
     """MiniMax H3 工作流，支持三种模式：
 
     - t2v：纯文生视频
@@ -185,8 +185,17 @@ def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, ta
         wf[save_id]["inputs"]["filename_prefix"] = f"video/{task_id}"
 
     if mode == "ref2va":
-        # 节点 5 = LoadImage（参考图）；ref_image_size 控制参考图分辨档位
-        wf["5"]["inputs"]["image"] = ref_image_name or image_name
+        # 参考图（支持多张：ref_images.ref_image_N 是动态增长输入）
+        # 多张参考图能同时锁定多个角色/场景，一致性显著强于单张
+        refs = ref_image_names if isinstance(ref_image_names, list) else ([ref_image_names] if (ref_image_names or image_name) else [])
+        refs = [r for r in refs if r]
+        if refs:
+            wf["5"]["inputs"]["image"] = refs[0]
+            wf["6"]["inputs"]["ref_images.ref_image_0"] = ["5", 0]
+            for i, name in enumerate(refs[1:], start=1):
+                nid = str(20 + i)  # 21, 22, …（避开原工作流节点号）
+                wf[nid] = {"class_type": "LoadImage", "inputs": {"image": name}}
+                wf["6"]["inputs"][f"ref_images.ref_image_{i}"] = [nid, 0]
         if ref_strength and "ref_image_size" in wf["6"]["inputs"]:
             wf["6"]["inputs"]["ref_image_size"] = ref_strength
     elif mode == "i2v":
@@ -197,10 +206,11 @@ def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, ta
     return wf
 
 
-def _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps=20, last_frame_name=None, use_lora=True, style="real", ref_image_name=None):
+def _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps=20, last_frame_name=None, use_lora=True, style="real", ref_image_name=None, ref_image_names=None):
     if model == "h3":
         return _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps,
-                                  last_frame_name, use_lora=use_lora, ref_image_name=ref_image_name)
+                                  last_frame_name, use_lora=use_lora, ref_image_name=ref_image_name,
+                                  ref_image_names=ref_image_names)
     return _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, use_lora, style)
 
 

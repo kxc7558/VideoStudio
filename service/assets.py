@@ -49,12 +49,16 @@ def scene_prompt_from_bible(s: dict) -> str:
 
 
 def to_english_tags(desc: str) -> str:
-    """中文描述 → 英文 SDXL tag（本地出图用；走本地 qwen3.8，不外发）。失败返回原描述。"""
+    """中文描述 → 英文 SDXL tag（本地出图用；走本地 qwen3.8，不外发）。失败返回原描述。
+
+    keep_alive=0：翻译完立即卸载 LLM——紧接着就要用 ComfyUI 出图，显存要留给它。
+    """
     out = ai.uncensored_text(
         "把用户给的动漫人物/场景中文描述翻译成英文 Stable Diffusion 提示词标签。"
         "只输出英文 tag，逗号分隔，不要解释、不要引号。保留所有外貌细节（发色/发型/体型/服装颜色）。",
         desc,
         max_tokens=300,
+        keep_alive=0,
     )
     return out.strip() if out else desc
 

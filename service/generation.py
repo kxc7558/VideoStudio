@@ -203,7 +203,7 @@ def _generate_single(task_id, mode, image_name, prompt, seed, width, height, len
 
 
 def generate_h3_shot(task_id, prompt, seed, width, height, length, steps=20, nsfw=True,
-                     image_name=None, last_frame_name=None, ref_image_name=None, timeout=3600):
+                     image_name=None, last_frame_name=None, ref_image_name=None, ref_image_names=None, timeout=3600):
     """生成单个 H3 镜头并下载到 output/{task_id}.mp4，返回 (成功?, 路径)。
 
     供导演管线等本地产线调用。nsfw=True 走无审查链路（未剪枝底模 + NaughtyTimes LoRA）。
@@ -215,14 +215,15 @@ def generate_h3_shot(task_id, prompt, seed, width, height, length, steps=20, nsf
 
     帧数须落在 H3 网格 17k+5（56/73/124…）。
     """
-    if ref_image_name:
+    refs = [r for r in (ref_image_names or ([ref_image_name] if ref_image_name else [])) if r]
+    if refs:
         mode = "ref2va"
     elif image_name:
         mode = "i2v"
     else:
         mode = "t2v"
     wf = _build_workflow("h3", mode, image_name, prompt, seed, width, height, length,
-                         task_id, steps, last_frame_name, use_lora=nsfw, ref_image_name=ref_image_name)
+                         task_id, steps, last_frame_name, use_lora=nsfw, ref_image_names=refs or None)
     pid = comfy.submit(wf)
     ok, history = comfy.wait_done(pid, timeout=timeout, should_cancel=lambda: _cancelled(task_id))
     if not ok:
