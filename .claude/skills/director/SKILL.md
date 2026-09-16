@@ -56,9 +56,13 @@ license: MIT
 ## 用法
 
 ```bash
-# 全流程（读剧本 → 出片）
+# 第一步：出资产（人物卡 + 场景卡）——管线会停在这里等你挑
 venv/Scripts/python.exe .claude/skills/director/scripts/director.py \
-    --script juben/juqing.txt --shots 12 --out output/my_drama.mp4
+    --script juben/juqing.txt --shots 12 --assets-only
+
+# 第二步：挑完把选中的报进来，才开跑视频
+venv/Scripts/python.exe .claude/skills/director/scripts/director.py \
+    --script juben/juqing.txt --shots 12 --pick "莉莉丝_01.png,召唤石室_01.png"
 
 # 只出分镜表不烧显卡（先审剧本）
 ... --plan-only
@@ -72,10 +76,19 @@ venv/Scripts/python.exe .claude/skills/director/scripts/director.py \
 
 **参数默认值**：640×832 竖屏、每镜 124 帧（5.2s @24fps）、20 步 euler+beta、无审查开启。
 
+## 资产先行（硬规则，代码强制）
+
+**出片前必须先出资产、由人选定形象**——参考图一旦定错，整片十几小时算力全废。
+
+- 不带 `--pick` 跑到出片阶段时，**管线拒绝继续**，只出资产并列出候选清单。
+- `--pick` 传选中的文件名（人物 + 场景），写入 `assets.json` 的 `selected` 字段；后续重跑自动复用它，不再重复烧显卡出图。
+- 每个资产出**多个候选**（人物默认 2 张，可 `--char-candidates 4`）方便对比。
+
 ## 硬规则
 
 - **帧数只能取 H3 网格值**：17k+5 → 56 / 73 / 124 / 192 …（不是 4n+1）。填错会报错或画面异常。
 - **内容不上云**：编剧/分镜/提示词全走本地 qwen3.8；只有用户明确要求才切云端。
 - **剧本文件读而不显**：脚本读字节直接送本地模型，不打印内容、不落日志。
 - **断点续跑**：每镜出片后立即落盘，`--start N` 可续；已存在的段自动跳过，绝不重算。
-- **长任务挂后台**：一部 12 镜短片约 12×25 秒/帧×124 帧 ≈ 2-4 小时（8GB 显存）。用 `run_in_background` 跑，别在前台等。
+- **长任务挂后台**：一部 12 镜短片约 12×60 分钟 ≈ 12 小时（8GB 显存 + Ref2VA）。用 `run_in_background` 跑，别在前台等。
+- **抗崩**：H3 跑大帧数偶发 CUDA OOM 会让 ComfyUI **整进程消失**；`ensure_comfy()` 会自动拉起并续跑，单镜失败会换种子重试。

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """资产生成（业务层）：人物卡 / 场景卡，供出片时做「参考图全程注意力」锁定一致性。
 
-双 provider：
-- **cloud**：豆包 Seedream（云端，质量最优）——**仅用于普通剧情**，成人内容会被平台拦。
+三 provider：
+- **cloud**：豆包 Seedream（云端，质量最优）——仅普通剧情，成人内容会被平台拦。
+- **chatgpt**：ChatGPT 网页版（用订阅额度，不花 API 钱）——仅普通剧情；首次需 `node scripts/chatgpt-image.js --login` 登录一次。
 - **local**：NoobAI-XL（本地 SDXL 动漫）——**无审查内容用**，中文描述先转英文 tag。
 
 产物落盘 `output/_assets_<剧本名>/{characters,scenes}/`，人工选定后由导演管线复用。
@@ -15,7 +16,7 @@ import ai
 import comfy
 from service import character as char_mod
 from service import doubao
-from shared.paths import OUTPUT
+from shared.paths import BASE, OUTPUT
 
 # 云端提示词模板（中文友好）
 _CLOUD_CHAR_SUFFIX = "，人物设定图，正面半身立绘，全身服装可见，五官清晰，纯色简洁背景，高质量"
@@ -63,8 +64,40 @@ def to_english_tags(desc: str) -> str:
     return out.strip() if out else desc
 
 
+CHATGPT_BRIDGE = BASE / "scripts" / "chatgpt-image.js"
+
+
 def _download(url: str, dest: Path) -> bool:
     return doubao.download_image(url, dest)
+
+
+def chatgpt_image(prompt: str, dest: Path, timeout: int = 420) -> dict:
+    """调 Node 桥用 ChatGPT 网页版出图（订阅额度）。首次需先 --login 登录一次。
+
+    返回 {"ok": bool, "msg": str}。浏览器为有头模式（无头会被 Cloudflare 403）。
+    """
+    import subprocess
+    if not CHATGPT_BRIDGE.exists():
+        return {"ok": False, "msg": f"桥脚本不存在：{CHATGPT_BRIDGE}"}
+    try:
+        r = subprocess.run(
+            ["node", str(CHATGPT_BRIDGE), "--prompt", prompt, "--out", str(dest)],
+            capture_output=True, text=True, timeout=timeout, cwd=str(BASE),
+            encoding="utf-8", errors="ignore",
+        )
+        for line in reversed((r.stdout or "").splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    d = json.loads(line)
+                    return {"ok": bool(d.get("ok")), "msg": str(d.get("msg", ""))[:160]}
+                except Exception:
+                    continue
+        return {"ok": False, "msg": (r.stdout or r.stderr or "桥无输出")[-160:]}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "msg": f"ChatGPT 出图超时（{timeout}s）"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "msg": f"{type(e).__name__}: {e}"[:160]}
 
 
 def generate_character_asset(name: str, desc: str, provider: str, out_dir: Path, candidates: int = 2) -> dict:
@@ -76,7 +109,14 @@ def generate_character_asset(name: str, desc: str, provider: str, out_dir: Path,
     """
     safe = "".join(ch for ch in name if ch.isalnum() or ch in "-_") or f"char{random.randint(1000, 9999)}"
     files = []
-    if provider == "cloud":
+    if provider == "chatgpt":
+        dest = out_dir / "characters" / f"{safe}_01.png"
+        r = chatgpt_image(f"{desc}{_CLOUD_CHAR_SUFFIX}", dest)
+        if r["ok"] and dest.exists():
+            files.append(str(dest.relative_to(OUTPUT)))
+        else:
+            return {"name": name, "desc": desc, "files": [], "provider": provider, "error": r["msg"]}
+    elif provider == "cloud":
         r = doubao.generate_image(f"{desc}{_CLOUD_CHAR_SUFFIX}")
         if r["ok"]:
             dest = out_dir / "characters" / f"{safe}_01.png"
@@ -103,6 +143,10 @@ def generate_scene_asset(name: str, desc: str, provider: str, out_dir: Path) -> 
     """生成场景参考图（无人物，纯环境）。"""
     safe = "".join(ch for ch in name if ch.isalnum() or ch in "-_") or f"scene{random.randint(1000, 9999)}"
     dest = out_dir / "scenes" / f"{safe}_01.png"
+    if provider == "chatgpt":
+        r = chatgpt_image(f"{desc}{_CLOUD_SCENE_SUFFIX}", dest)
+        return {"name": name, "desc": desc, "file": str(dest.relative_to(OUTPUT)) if r["ok"] and dest.exists() else "",
+                "provider": provider, "error": "" if r["ok"] else r["msg"]}
     if provider == "cloud":
         r = doubao.generate_image(f"{desc}{_CLOUD_SCENE_SUFFIX}")
         if not r["ok"]:

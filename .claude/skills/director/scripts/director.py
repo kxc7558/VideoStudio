@@ -49,6 +49,43 @@ def control_state() -> str:
         return "RUN"
 
 
+# ComfyUI 位置（长跑防崩：挂了自动拉起）
+COMFY_DIR = Path(r"D:\ComfyUI_Wan")
+COMFY_PY = COMFY_DIR / "venv" / "Scripts" / "python.exe"
+
+
+def ensure_comfy(wait_s: int = 240) -> bool:
+    """确保 ComfyUI 在线：不在就拉起并等就绪。
+
+    长跑必备——H3 跑大帧数偶发 CUDA OOM 会**整进程消失**（不报错、直接没），
+    没有这层保护，一次崩溃就浪费整晚。
+    """
+    if comfy.is_ready():
+        return True
+    log("⚠️ ComfyUI 无响应（疑似 OOM 崩进程），正在拉起…")
+    try:
+        import subprocess
+        subprocess.Popen(
+            [str(COMFY_PY), "main.py", "--lowvram", "--reserve-vram", "0.3",
+             "--listen", "127.0.0.1", "--port", "8188"],
+            cwd=str(COMFY_DIR),
+            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:  # noqa: BLE001
+        log(f"拉起失败：{type(e).__name__}: {e}")
+        return False
+    waited = 0
+    while waited < wait_s:
+        time.sleep(10)
+        waited += 10
+        if comfy.is_ready():
+            log(f"ComfyUI 已恢复（{waited}s）")
+            return True
+    log(f"ComfyUI {wait_s}s 内未就绪")
+    return False
+
+
 def load_genres() -> dict:
     """读题材包 frontmatter：name / match 正则 / 正文。"""
     genres = {}
@@ -184,10 +221,11 @@ def main():
     ap.add_argument("--length", type=int, default=124, help="每镜帧数（H3 网格 56/73/124/192）")
     ap.add_argument("--steps", type=int, default=20)
     ap.add_argument("--no-nsfw", action="store_true", help="关闭无审查链路（默认开启）")
-    ap.add_argument("--asset-provider", default="", choices=["", "local", "cloud"],
-                    help="资产出图引擎：local=NoobAI（无审查）/ cloud=豆包 Seedream（质量更优，仅普通剧情）。默认按 nsfw 自动选")
+    ap.add_argument("--asset-provider", default="", choices=["", "local", "cloud", "chatgpt"],
+                    help="资产出图引擎：local=NoobAI（无审查）/ cloud=豆包 Seedream / chatgpt=ChatGPT 网页版（后两者仅普通剧情，质量更优）。默认按 nsfw 自动选")
     ap.add_argument("--char-candidates", type=int, default=2, help="每人物出几张候选（local 有效）")
     ap.add_argument("--assets-only", action="store_true", help="只出资产（人物卡/场景卡），先人工选定再出片")
+    ap.add_argument("--pick", default="", help="选定要用的资产文件名（逗号分隔，如 \"莉莉丝_01.png,召唤石室_01.png\"）；不传则停在资产阶段等人挑")
     ap.add_argument("--no-ref", action="store_true", help="不用参考图（退回纯 t2v）")
     args = ap.parse_args()
 
@@ -270,20 +308,53 @@ def main():
         log("②.5 无故事圣经，跳过资产")
 
     if args.assets_only:
-        log(f"✅ 只出资产：{assets_file.relative_to(OUTPUT)}（人工选定后去掉 --assets-only 再跑）")
+        log(f"✅ 只出资产：{assets_file.relative_to(OUTPUT)}（人工选定后用 --pick 指定再跑）")
         return
 
-    # 参考图：人物卡全程使用；场景卡按镜头所属场景匹配（避免不同场景互相干扰）
+    # ---- 人工选定关卡（硬规则，代码强制）----
+    # 参考图一旦定错，整片十几小时算力全废；形象挑选必须由人做。
+    if args.pick:
+        chosen = [x.strip() for x in args.pick.split(",") if x.strip()]
+        available = [f for c in manifest.get("characters", []) for f in c.get("files", [])]
+        available += [s["file"] for s in manifest.get("scenes", []) if s.get("file")]
+        bad = [c for c in chosen if c not in available]
+        if bad:
+            log(f"❌ --pick 里有不存在的文件：{bad}")
+            log("   可选清单见下方，或看资产目录")
+            args.pick = ""
+        else:
+            manifest["selected"] = chosen
+            assets_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            log(f"②.5 已记录选定：{chosen}")
+
+    if manifest and not manifest.get("selected") and not args.no_ref:
+        log("")
+        log("⏸ 停在资产阶段——**请先挑形象**（参考图定错=整片算力白费）")
+        for c in manifest.get("characters", []):
+            for f in c.get("files", []):
+                log(f"   人物「{c.get('name')}」候选：{Path(f).name}")
+        for s in manifest.get("scenes", []):
+            if s.get("file"):
+                log(f"   场景「{s.get('name')}」候选：{Path(s['file']).name}")
+        log("")
+        log("👉 挑好后加参数重跑，例如：")
+        log(f'   --pick "{Path(manifest["characters"][0]["files"][0]).name},'
+            f'{Path(manifest["scenes"][0]["file"]).name if manifest.get("scenes") and manifest["scenes"][0].get("file") else ""}"')
+        log(f"   资产目录：{assets_mod.asset_dir(script_path.stem)}")
+        return
+
+    # 参考图：选定的优先；没选定（--no-ref 场景）就不用
+    selected = manifest.get("selected") or []
     char_refs = []          # [comfy 文件名]，全片每镜都带
     scene_refs = {}         # {场景名: comfy 文件名}
     if manifest and not args.no_ref:
         try:
             for c in manifest.get("characters", []):
-                files = c.get("files") or []
+                files = [f for f in (c.get("files") or []) if not selected or f in selected]
                 if files:
                     char_refs.append(comfy.upload_image(OUTPUT / files[0]))
             for s in manifest.get("scenes", []):
-                if s.get("file"):
+                if s.get("file") and (not selected or s["file"] in selected):
                     scene_refs[s.get("name", "")] = comfy.upload_image(OUTPUT / s["file"])
             log(f"②.5 参考图就位：{len(char_refs)} 人物 + {len(scene_refs)} 场景 → 全片 Ref2VA 锁定")
         except Exception as e:  # noqa: BLE001
@@ -358,21 +429,30 @@ def main():
         if not h3_text:
             continue
         log(f"④ 第 {i + 1}/{len(shots)} 镜：出片中（{args.width}×{args.height}/{args.length}帧/{args.steps}步）…")
-        ok, _ = generate_h3_shot(
-            task_id=f"director_{script_path.stem}_{i:02d}",
-            prompt=h3_text, seed=20260915 + i,
-            width=args.width, height=args.height, length=args.length,
-            steps=args.steps, nsfw=not args.no_nsfw,
-            ref_image_names=shot_refs or None,   # Ref2VA：人物全程 + 本镜场景，全程注意力锁定
-            timeout=7200,   # 124 帧 ≈ 52 分钟/镜，留足余量（机器有负载时更慢）
-        )
+        ok = False
+        for attempt in range(3):
+            if not ensure_comfy():      # ComfyUI 崩了（多为 OOM 整进程消失）→ 自动拉起
+                log("❌ ComfyUI 拉不起来，中止")
+                break
+            ok, _ = generate_h3_shot(
+                task_id=f"director_{script_path.stem}_{i:02d}",
+                prompt=h3_text, seed=20260915 + i + attempt * 1000,
+                width=args.width, height=args.height, length=args.length,
+                steps=args.steps, nsfw=not args.no_nsfw,
+                ref_image_names=shot_refs or None,   # Ref2VA：人物全程 + 本镜场景，全程注意力锁定
+                timeout=7200,   # 124 帧 ≈ 60 分钟/镜，留足余量（机器有负载时更慢）
+            )
+            if ok:
+                break
+            log(f"   第 {i + 1} 镜第 {attempt + 1} 次失败（多为 OOM），20 秒后换种子重试…")
+            time.sleep(20)
         produced = OUTPUT / f"director_{script_path.stem}_{i:02d}.mp4"
         if ok and produced.exists():
             produced.replace(seg)
             segs.append(seg)
             log(f"✅ 第 {i + 1}/{len(shots)} 镜完成：{seg.name}")
         else:
-            log(f"❌ 第 {i + 1}/{len(shots)} 镜失败，跳过（可 --start {i} 续跑）")
+            log(f"❌ 第 {i + 1}/{len(shots)} 镜 3 次均失败，跳过（可 --start {i} 续跑）")
 
     # 阶段⑤：拼接成片
     if len(segs) < 2:

@@ -42,3 +42,8 @@ juben/
 *.txt
 !README.md
 _downloads/
+
+# ChatGPT 出图桥
+node_modules/
+data/chatgpt-profile/
+data/_cgtest
