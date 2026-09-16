@@ -85,33 +85,52 @@ def _uncensored_json(system: str, user: str) -> str:
     return r.json().get("response", "").strip()
 
 
+def _brain() -> str:
+    """读导演大脑设置（复用 ai.BRAIN，避免两处配置打架）。"""
+    try:
+        import ai as _ai
+        return getattr(_ai, "BRAIN", "auto")
+    except Exception:
+        return "auto"
+
+
+def _deepseek_json(system: str, user: str) -> str:
+    """走云端 DeepSeek 生成（返回原始文本，由调用方解析 JSON）。"""
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.7,
+    }
+    r = httpx.post(
+        DEEPSEEK_URL,
+        headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
+        json=payload,
+        timeout=180,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
 def split_story(story: str, n_shots: int = 6, creative_brief: str = "", local: bool = False) -> list:
     """把故事拆成分镜列表 [{id, scene, prompt, narration, duration}]。
 
-    local=True 且本地 uncensored 模型可用时，改用本地拆剧本（无审查出片用，不碰云端）。
+    大脑分派：ai.BRAIN=codex → Codex 订阅；local=True → 本地无审查；否则云端 DeepSeek。
     抛异常时由调用方兜底；正常返回 list（可能为空）。
     """
     system = (SYSTEM % n_shots) + creative_brief
-    if local:
+    if _brain() == "codex":
+        import ai as _ai
+        raw = _ai.codex_text(system, story) or (
+            _uncensored_json(system, story) if local else _deepseek_json(system, story)
+        )
+    elif local:
         raw = _uncensored_json(system, story)
     else:
-        payload = {
-            "model": MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": story},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.7,
-        }
-        r = httpx.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
-            json=payload,
-            timeout=180,
-        )
-        r.raise_for_status()
-        raw = r.json()["choices"][0]["message"]["content"]
+        raw = _deepseek_json(system, story)
     obj = json.loads(_extract_json(raw))
     shots = obj.get("shots", [])
     # 归一化 id，确保是递增整数

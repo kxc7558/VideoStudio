@@ -17,8 +17,17 @@ from shared.paths import OUTPUT, UPLOADS, WORKFLOWS
 CARD_WIDTH = 832
 CARD_HEIGHT = 1216
 CANDIDATES = 4
-STEPS = 28
-CFG = 5.0
+STEPS = 30
+# 底模：WAI-illustrious-SDXL v17（Civitai 榜首动漫微调，1.5M 下载）
+# 对比实测：比 NoobAI-XL v1.0 高 2-3 档（材质/手部/构图），比 Illustrious 官方底座也更准
+CKPT = "WAI-illustrious-SDXL-v17.safetensors"
+# 细节增强 LoRA（盲评实测：温和叠加 8.8 > 不挂 8.5 > 单独 slider@1.0 只有 6.8）
+# 教训：细节 LoRA 用力过猛会劣化画面，必须温和叠加
+DETAIL_LORAS = (
+    ("detail-slider-illustrious.safetensors", 0.8, 0.8),
+    ("detail-tweaker-xl.safetensors", 0.6, 0.6),
+)
+CFG = 5.5
 SAMPLER = "euler_ancestral"
 SCHEDULER = "normal"
 CARD_DIR = OUTPUT / "_character_cards"
@@ -28,8 +37,20 @@ _ANTI_REAL = "realistic, photorealistic, 3d, worst quality, low quality, bad ana
 
 
 def build_card_workflow(prompt: str, seed: int, batch: int = CANDIDATES, width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> dict:
-    """构建文生图工作流：一次出 batch 张候选。"""
+    """构建文生图工作流：一次出 batch 张候选（WAI v17 + 细节 LoRA 链）。"""
     wf = json.loads((WORKFLOWS / "anchor_t2i_api.json").read_text(encoding="utf-8"))
+    wf["1"]["inputs"]["ckpt_name"] = CKPT
+    # 注入细节增强 LoRA 链（温和叠加，见 DETAIL_LORAS 注释）
+    model_src, clip_src = ["1", 0], ["1", 1]
+    for i, (lora, sm, sc) in enumerate(DETAIL_LORAS):
+        nid = str(20 + i)
+        wf[nid] = {"class_type": "LoraLoader", "inputs": {
+            "model": model_src, "clip": clip_src, "lora_name": lora,
+            "strength_model": sm, "strength_clip": sc}}
+        model_src, clip_src = [nid, 0], [nid, 1]
+    wf["5"]["inputs"]["model"] = model_src
+    wf["2"]["inputs"]["clip"] = clip_src
+    wf["3"]["inputs"]["clip"] = clip_src
     wf["2"]["inputs"]["text"] = prompt
     wf["3"]["inputs"]["text"] = _ANTI_REAL
     wf["4"]["inputs"].update({"width": width, "height": height, "batch_size": batch})

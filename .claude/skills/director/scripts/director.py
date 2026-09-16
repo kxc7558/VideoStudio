@@ -196,7 +196,7 @@ def split_shots(script_text: str, target: int, brief: str, genre_body: str, batc
         log(f"② 拆分镜 {len(shots)}/{target}（剧本 {start * 100 // story_len}%~{end * 100 // story_len}%）")
         ctx = f"\n\n{genre_body[:1500]}\n\n{brief}".strip()
         try:
-            picked = storyboard.split_story(chunk, batch, ctx, local=True)
+            picked = storyboard.split_story(chunk, batch, ctx, local=(ai.BRAIN == "local"))
         except Exception as e:  # noqa: BLE001
             log(f"   拆镜失败：{type(e).__name__}，跳过本批")
             picked = []
@@ -227,6 +227,8 @@ def main():
     ap.add_argument("--assets-only", action="store_true", help="只出资产（人物卡/场景卡），先人工选定再出片")
     ap.add_argument("--pick", default="", help="选定要用的资产文件名（逗号分隔，如 \"莉莉丝_01.png,召唤石室_01.png\"）；不传则停在资产阶段等人挑")
     ap.add_argument("--no-ref", action="store_true", help="不用参考图（退回纯 t2v）")
+    ap.add_argument("--brain", default="", choices=["", "codex", "cloud", "local"],
+                    help="导演大脑：codex=走 ChatGPT 订阅 / cloud=DeepSeek / local=本地无审查。默认按文件后缀自动选（.md→codex，.txt→local）")
     args = ap.parse_args()
 
     if args.length not in FRAME_GRID:
@@ -239,11 +241,16 @@ def main():
         sys.exit(1)
     # 只读字节送本地模型；打印长度不打印内容
     script_text = script_path.read_bytes().decode("utf-8", errors="ignore")
+
+    # 大脑按用户约定自动选：.md（可读故事）走云端；.txt（禁读）走本地无审查
+    brain = args.brain or ("codex" if script_path.suffix.lower() == ".md" else "local")
+    ai.BRAIN = brain
+    log(f"导演大脑：{brain}（{'云端订阅' if brain == 'codex' else 'DeepSeek' if brain == 'cloud' else '本地无审查'}）")
     work = OUTPUT / f"_director_{script_path.stem}"
     work.mkdir(parents=True, exist_ok=True)
     log(f"剧本载入（{len(script_text)} 字）｜工作目录 {work.name}")
 
-    if not ai.uncensored_ready():
+    if brain == "local" and not ai.uncensored_ready():
         log("❌ 本地编剧模型未就绪（Ollama qwen3.8-uncensored）")
         sys.exit(1)
 
@@ -282,7 +289,8 @@ def main():
         return
 
     # 阶段②.5：资产（人物卡 + 场景卡）——出片前先定角色长相与场景基调
-    assets_file = work / "assets.json"
+    # ⚠️ 清单必须与资产图同目录（asset_dir），否则会出现「清单在 A、图在 B」的错配
+    assets_file = assets_mod.asset_dir(script_path.stem) / "assets.json"
     manifest = {}
     if assets_file.exists():
         manifest = json.loads(assets_file.read_text(encoding="utf-8"))
@@ -345,21 +353,28 @@ def main():
 
     # 参考图：选定的优先；没选定（--no-ref 场景）就不用
     selected = manifest.get("selected") or []
-    char_refs = []          # [comfy 文件名]，全片每镜都带
+    char_refs = {}          # {角色名: comfy 文件名}
+    char_always = {}        # {角色名: 是否每镜都带}
     scene_refs = {}         # {场景名: comfy 文件名}
+    scene_always = {}       # {场景名: 是否每镜都带}
     if manifest and not args.no_ref:
         try:
             for c in manifest.get("characters", []):
                 files = [f for f in (c.get("files") or []) if not selected or f in selected]
                 if files:
-                    char_refs.append(comfy.upload_image(OUTPUT / files[0]))
+                    key = c.get("name", "")
+                    char_refs[key] = comfy.upload_image(OUTPUT / files[0])
+                    char_always[key] = bool(c.get("always"))
             for s in manifest.get("scenes", []):
                 if s.get("file") and (not selected or s["file"] in selected):
-                    scene_refs[s.get("name", "")] = comfy.upload_image(OUTPUT / s["file"])
-            log(f"②.5 参考图就位：{len(char_refs)} 人物 + {len(scene_refs)} 场景 → 全片 Ref2VA 锁定")
+                    key = s.get("name", "")
+                    scene_refs[key] = comfy.upload_image(OUTPUT / s["file"])
+                    scene_always[key] = bool(s.get("always"))
+            log(f"②.5 参考图就位：{len(char_refs)} 人物 + {len(scene_refs)} 场景 → Ref2VA 锁定"
+                f"（标 always 的每镜都带，其余按镜头文本匹配）")
         except Exception as e:  # noqa: BLE001
             log(f"⚠️ 参考图上传失败（{type(e).__name__}），退回 t2v")
-            char_refs, scene_refs = [], {}
+            char_refs, scene_refs, char_always, scene_always = {}, {}, {}, {}
 
     # 阶段③：集中写完所有 H3 提示词（qwen 用完立即卸载，把内存让给视频模型）
     seconds = args.length / 24.0
@@ -379,7 +394,7 @@ def main():
             if brief:
                 rules = f"{rules}\n\n【故事圣经·全片一致】\n{brief[:900]}"
             log(f"   第 {i + 1}/{len(shots)} 镜提示词…")
-            txt = ai.h3_prompt(plain, "t2v", seconds, local=True, extra_rules=rules)
+            txt = ai.h3_prompt(plain, "t2v", seconds, local=(brain == "local"), extra_rules=rules)
             if not txt:
                 txt = plain
             elif brief:
@@ -423,9 +438,12 @@ def main():
             break
 
         h3_text = (h3_prompts[i] if i < len(h3_prompts) else "") or str(shot.get("prompt", "")).strip()
-        # 本镜参考图 = 全部人物卡 + 该镜所属场景卡（按场景名出现在镜头 scene 文本里匹配）
-        shot_scene = str(shot.get("scene", "")) + str(shot.get("narration", ""))
-        shot_refs = list(char_refs) + [v for k, v in scene_refs.items() if k and k in shot_scene]
+        # 本镜参考图 = 该镜涉及的人物卡 + 该镜所属场景卡
+        # ⚠️ 只用镜头的「画面描述(scene)」匹配：narration/h3 提示词里含故事圣经连续性块
+        #（列出全片所有人物），拿它们匹配会让人物卡误挂到每一镜。
+        shot_scene = str(shot.get("scene", ""))
+        shot_refs = [v for k, v in char_refs.items() if char_always.get(k) or (k and k in shot_scene)]
+        shot_refs += [v for k, v in scene_refs.items() if scene_always.get(k) or (k and k in shot_scene)]
         if not h3_text:
             continue
         log(f"④ 第 {i + 1}/{len(shots)} 镜：出片中（{args.width}×{args.height}/{args.length}帧/{args.steps}步）…")

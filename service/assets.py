@@ -25,8 +25,9 @@ _CLOUD_CHAR_SUFFIX = "，人物设定图，正面半身立绘，全身服装可�
 _CLOUD_SCENE_SUFFIX = "，场景概念图，无人物，宽画幅，电影感光线，高质量"
 
 # 本地 SDXL 提示词模板（英文 tag，NoobAI 训练分布）
-_LOCAL_CHAR_SUFFIX = ("masterpiece, best quality, very aesthetic, character reference sheet, "
-                      "solo, full body, standing, clear face, plain background")
+_LOCAL_CHAR_SUFFIX = ("masterpiece, best quality, very aesthetic, absurdres, "
+                      "solo, 1girl, single character, full body, standing straight, front view, "
+                      "clear detailed face, plain white background, sharp focus, detailed skin")
 _LOCAL_SCENE_SUFFIX = ("masterpiece, best quality, very aesthetic, no humans, scenery, "
                        "wide shot, cinematic lighting, detailed environment")
 
@@ -91,12 +92,16 @@ def codex_image(prompt: str, dest: Path, timeout: int = 420) -> dict:
 
     before = snapshot()
     try:
-        r = subprocess.run(
-            [exe, "exec", "-s", "read-only",
-             f"用 image_gen 工具生成一张图片：{prompt}。只生成图片，不要写代码，不要做别的事。"],
-            capture_output=True, text=True, timeout=timeout, cwd=str(BASE),
-            encoding="utf-8", errors="ignore",
-        )
+        import tempfile
+        # ⚠️ 裸临时目录跑：在项目目录里 Codex 会读 AGENTS.md/加载 MCP，一次请求 7 分钟+；
+        # 裸目录实测 8 秒。出图结果仍落在 ~/.codex/generated_images（与 cwd 无关）。
+        with tempfile.TemporaryDirectory() as td:
+            r = subprocess.run(
+                [exe, "exec", "-s", "read-only", "--skip-git-repo-check", "-C", td,
+                 f"用 image_gen 工具生成一张图片：{prompt}。只生成图片，不要写代码，不要做别的事。"],
+                capture_output=True, text=True, timeout=timeout,
+                encoding="utf-8", errors="ignore",
+            )
     except subprocess.TimeoutExpired:
         return {"ok": False, "msg": f"Codex 出图超时（{timeout}s）"}
     except FileNotFoundError:

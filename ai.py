@@ -136,6 +136,40 @@ _DETAIL_RULES = """【细节与清晰度要求（必须遵守）】
 · 禁止出现 motion blur、fast motion、rapid、frantic、chaotic 等会诱发模糊的词。"""
 
 
+# 大脑选择：auto=按 local 参数（本地无审查/云端 DeepSeek）；codex=强制走 Codex 订阅
+BRAIN = "auto"
+
+
+def codex_text(system: str, user: str) -> str:
+    """用 Codex CLI 做文本生成（走 ChatGPT 订阅，不花 API 钱）。
+
+    ⚠️ 必须在**裸临时目录**里跑（-C + --skip-git-repo-check）：
+    在项目目录里跑，Codex 会读 AGENTS.md、加载 MCP、做完整 agent 循环，
+    一次简单请求要 7 分钟以上；裸目录实测 8 秒。
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    exe = shutil.which("codex")
+    if not exe:
+        return ""
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            last = Path(td) / "last.txt"
+            prompt = f"{system}\n\n====\n\n{user}"
+            subprocess.run(
+                [exe, "exec", "-s", "read-only", "--skip-git-repo-check",
+                 "-C", td, "-o", str(last), prompt],
+                capture_output=True, text=True, timeout=600,
+                encoding="utf-8", errors="ignore",
+            )
+            if last.exists():
+                return last.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
 def _deepseek(system: str, user: str) -> str:
     """调用 DeepSeek API 写高质量视频提示词。"""
     if not DEEPSEEK_KEY:
@@ -183,8 +217,16 @@ def h3_prompt(plain: str, mode: str = "t2v", seconds: float = 5.0, local: bool =
 
 
 def _writer(local: bool):
-    """返回文本生成函数。local=True 时只允许本地 uncensored——本地模型不可用就
-    返回空串（调用方回退原提示词），绝不悄悄回落云端：无审查内容不允许外发。"""
+    """返回文本生成函数。
+
+    BRAIN 优先：codex=强制走 Codex 订阅；cloud=强制云端 DeepSeek。
+    否则按 local 参数：local=True 只允许本地 uncensored——本地模型不可用就返回空串
+    （调用方回退原提示词），绝不悄悄回落云端：无审查内容不允许外发。
+    """
+    if BRAIN == "codex":
+        return codex_text
+    if BRAIN in ("cloud", "deepseek"):
+        return _deepseek
     if not local:
         return _deepseek
     if uncensored_ready():
