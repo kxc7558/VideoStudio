@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """资产生成（业务层）：人物卡 / 场景卡，供出片时做「参考图全程注意力」锁定一致性。
 
-三 provider：
+四 provider：
+- **codex**：Codex 内置 `image_gen`（走订阅额度，不花 API 钱）——**普通剧情首选**。
+  无需登录维护（Codex CLI 已认证），产物落在 `~/.codex/generated_images/<会话>/`，由本模块采集。
 - **cloud**：豆包 Seedream（云端，质量最优）——仅普通剧情，成人内容会被平台拦。
 - **chatgpt**：ChatGPT 网页版（用订阅额度，不花 API 钱）——仅普通剧情；首次需 `node scripts/chatgpt-image.js --login` 登录一次。
 - **local**：NoobAI-XL（本地 SDXL 动漫）——**无审查内容用**，中文描述先转英文 tag。
@@ -65,6 +67,53 @@ def to_english_tags(desc: str) -> str:
 
 
 CHATGPT_BRIDGE = BASE / "scripts" / "chatgpt-image.js"
+CODEX_IMG_DIR = Path.home() / ".codex" / "generated_images"
+
+
+def codex_image(prompt: str, dest: Path, timeout: int = 420) -> dict:
+    """用 Codex 内置 image_gen 出图（走 ChatGPT 订阅额度，不花 API 钱）。
+
+    Codex 把图写在自己的 ~/.codex/generated_images/<会话>/ 下（沙箱不许它写别处），
+    所以做法是：出图前拍快照 → 出图后取新增的 PNG → 拷到目标路径。
+    返回 {"ok": bool, "msg": str}。
+    """
+    import subprocess
+    import shutil
+
+    # Windows 上 npm 装的是 codex.cmd 包装脚本，subprocess 直接叫 "codex" 找不到，
+    # 用 shutil.which 按 PATHEXT 解析（会命中 codex.cmd）
+    exe = shutil.which("codex")
+    if not exe:
+        return {"ok": False, "msg": "找不到 codex 命令（未安装或不在 PATH）"}
+
+    def snapshot() -> set:
+        return set(CODEX_IMG_DIR.rglob("*.png")) if CODEX_IMG_DIR.exists() else set()
+
+    before = snapshot()
+    try:
+        r = subprocess.run(
+            [exe, "exec", "-s", "read-only",
+             f"用 image_gen 工具生成一张图片：{prompt}。只生成图片，不要写代码，不要做别的事。"],
+            capture_output=True, text=True, timeout=timeout, cwd=str(BASE),
+            encoding="utf-8", errors="ignore",
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "msg": f"Codex 出图超时（{timeout}s）"}
+    except FileNotFoundError:
+        return {"ok": False, "msg": "找不到 codex 命令（未安装或不在 PATH）"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "msg": f"{type(e).__name__}: {e}"[:160]}
+
+    new = sorted(snapshot() - before, key=lambda f: f.stat().st_mtime, reverse=True)
+    if not new:
+        tail = ((r.stdout or "") + (r.stderr or ""))[-200:].replace("\n", " ")
+        return {"ok": False, "msg": f"Codex 未产出新图（{tail}）"}
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(new[0], dest)
+        return {"ok": True, "msg": ""}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "msg": f"拷贝失败：{e}"[:160]}
 
 
 def _download(url: str, dest: Path) -> bool:
@@ -109,7 +158,14 @@ def generate_character_asset(name: str, desc: str, provider: str, out_dir: Path,
     """
     safe = "".join(ch for ch in name if ch.isalnum() or ch in "-_") or f"char{random.randint(1000, 9999)}"
     files = []
-    if provider == "chatgpt":
+    if provider == "codex":
+        dest = out_dir / "characters" / f"{safe}_01.png"
+        r = codex_image(f"{desc}{_CLOUD_CHAR_SUFFIX}", dest)
+        if r["ok"] and dest.exists():
+            files.append(str(dest.relative_to(OUTPUT)))
+        else:
+            return {"name": name, "desc": desc, "files": [], "provider": provider, "error": r["msg"]}
+    elif provider == "chatgpt":
         dest = out_dir / "characters" / f"{safe}_01.png"
         r = chatgpt_image(f"{desc}{_CLOUD_CHAR_SUFFIX}", dest)
         if r["ok"] and dest.exists():
@@ -143,6 +199,10 @@ def generate_scene_asset(name: str, desc: str, provider: str, out_dir: Path) -> 
     """生成场景参考图（无人物，纯环境）。"""
     safe = "".join(ch for ch in name if ch.isalnum() or ch in "-_") or f"scene{random.randint(1000, 9999)}"
     dest = out_dir / "scenes" / f"{safe}_01.png"
+    if provider == "codex":
+        r = codex_image(f"{desc}{_CLOUD_SCENE_SUFFIX}", dest)
+        return {"name": name, "desc": desc, "file": str(dest.relative_to(OUTPUT)) if r["ok"] and dest.exists() else "",
+                "provider": provider, "error": "" if r["ok"] else r["msg"]}
     if provider == "chatgpt":
         r = chatgpt_image(f"{desc}{_CLOUD_SCENE_SUFFIX}", dest)
         return {"name": name, "desc": desc, "file": str(dest.relative_to(OUTPUT)) if r["ok"] and dest.exists() else "",

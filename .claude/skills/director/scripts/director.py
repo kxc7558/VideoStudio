@@ -221,8 +221,8 @@ def main():
     ap.add_argument("--length", type=int, default=124, help="每镜帧数（H3 网格 56/73/124/192）")
     ap.add_argument("--steps", type=int, default=20)
     ap.add_argument("--no-nsfw", action="store_true", help="关闭无审查链路（默认开启）")
-    ap.add_argument("--asset-provider", default="", choices=["", "local", "cloud", "chatgpt"],
-                    help="资产出图引擎：local=NoobAI（无审查）/ cloud=豆包 Seedream / chatgpt=ChatGPT 网页版（后两者仅普通剧情，质量更优）。默认按 nsfw 自动选")
+    ap.add_argument("--asset-provider", default="", choices=["", "local", "cloud", "chatgpt", "codex"],
+                    help="资产出图引擎：local=NoobAI（无审查）/ codex=Codex 内置 image_gen（普通剧情首选，走订阅不花钱）/ cloud=豆包 Seedream / chatgpt=ChatGPT 网页版。默认按 nsfw 自动选")
     ap.add_argument("--char-candidates", type=int, default=2, help="每人物出几张候选（local 有效）")
     ap.add_argument("--assets-only", action="store_true", help="只出资产（人物卡/场景卡），先人工选定再出片")
     ap.add_argument("--pick", default="", help="选定要用的资产文件名（逗号分隔，如 \"莉莉丝_01.png,召唤石室_01.png\"）；不传则停在资产阶段等人挑")
@@ -291,7 +291,7 @@ def main():
         log(f"②.5 复用已有资产（{chars} 人物 / {scenes} 场景，provider={manifest.get('provider')}）")
     elif bible:
         # provider：无审查内容必须本地（云端会拦）；普通剧情默认云端（质量更优）
-        provider = args.asset_provider or ("local" if not args.no_nsfw else "cloud")
+        provider = args.asset_provider or ("local" if not args.no_nsfw else "codex")
         log(f"②.5 生成资产（provider={provider}）——人物卡 + 场景卡…")
         if not comfy.is_ready():
             log("❌ ComfyUI 未启动（8188），无法出资产")
