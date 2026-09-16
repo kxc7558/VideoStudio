@@ -84,6 +84,17 @@ venv/Scripts/python.exe .claude/skills/director/scripts/director.py \
 - `--pick` 传选中的文件名（人物 + 场景），写入 `assets.json` 的 `selected` 字段；后续重跑自动复用它，不再重复烧显卡出图。
 - 每个资产出**多个候选**（人物默认 2 张，可 `--char-candidates 4`）方便对比。
 
+### 出图引擎（按内容分级，自动选）
+
+| provider | 用什么 | 适用 | 成本 |
+|---|---|---|---|
+| **codex**（普通剧情默认） | Codex 内置 `image_gen` | 普通剧情 | 走 ChatGPT 订阅，不花 API 钱 |
+| **cloud** | 豆包 Seedream | 普通剧情备选 | 豆包每日额度 |
+| **chatgpt** | ChatGPT 网页版（Playwright 驱动） | 普通剧情备选 | 订阅额度；需有头 Chrome 走代理 |
+| **local** | NoobAI-XL（本地 SDXL） | **无审查内容必用** | 免费（占本机显卡） |
+
+成人内容**不能走云端**（会被平台拦），管线在 `--no-nsfw` 未指定时自动选 `local`。
+
 ## 硬规则
 
 - **帧数只能取 H3 网格值**：17k+5 → 56 / 73 / 124 / 192 …（不是 4n+1）。填错会报错或画面异常。
