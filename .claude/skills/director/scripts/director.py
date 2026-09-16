@@ -26,6 +26,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 import ai
 import comfy
 import storyboard
+from service import assets as assets_mod
 from service.generation import generate_h3_shot
 from shared.ffmpeg_tools import concat_videos
 from shared.paths import OUTPUT
@@ -183,6 +184,11 @@ def main():
     ap.add_argument("--length", type=int, default=124, help="每镜帧数（H3 网格 56/73/124/192）")
     ap.add_argument("--steps", type=int, default=20)
     ap.add_argument("--no-nsfw", action="store_true", help="关闭无审查链路（默认开启）")
+    ap.add_argument("--asset-provider", default="", choices=["", "local", "cloud"],
+                    help="资产出图引擎：local=NoobAI（无审查）/ cloud=豆包 Seedream（质量更优，仅普通剧情）。默认按 nsfw 自动选")
+    ap.add_argument("--char-candidates", type=int, default=2, help="每人物出几张候选（local 有效）")
+    ap.add_argument("--assets-only", action="store_true", help="只出资产（人物卡/场景卡），先人工选定再出片")
+    ap.add_argument("--no-ref", action="store_true", help="不用参考图（退回纯 t2v）")
     args = ap.parse_args()
 
     if args.length not in FRAME_GRID:
@@ -236,6 +242,48 @@ def main():
     if args.plan_only:
         log(f"✅ 只出计划：故事圣经 {bible_file.name}｜分镜 {shots_file.name}（{len(shots)} 镜）")
         return
+
+    # 阶段②.5：资产（人物卡 + 场景卡）——出片前先定角色长相与场景基调
+    assets_file = work / "assets.json"
+    manifest = {}
+    if assets_file.exists():
+        manifest = json.loads(assets_file.read_text(encoding="utf-8"))
+        chars = len(manifest.get("characters", []))
+        scenes = len(manifest.get("scenes", []))
+        log(f"②.5 复用已有资产（{chars} 人物 / {scenes} 场景，provider={manifest.get('provider')}）")
+    elif bible:
+        # provider：无审查内容必须本地（云端会拦）；普通剧情默认云端（质量更优）
+        provider = args.asset_provider or ("local" if not args.no_nsfw else "cloud")
+        log(f"②.5 生成资产（provider={provider}）——人物卡 + 场景卡…")
+        if not comfy.is_ready():
+            log("❌ ComfyUI 未启动（8188），无法出资产")
+            sys.exit(1)
+        manifest = assets_mod.build_all(bible, script_path.stem, provider=provider,
+                                        char_candidates=args.char_candidates)
+        for c in manifest.get("characters", []):
+            log(f"   人物「{c.get('name')}」→ {len(c.get('files', []))} 张"
+                + (f"｜失败：{c.get('error', '')}" if c.get("error") else ""))
+        for s in manifest.get("scenes", []):
+            log(f"   场景「{s.get('name')}」→ {'OK' if s.get('file') else '失败'}"
+                + (f"｜{s.get('error', '')}" if s.get("error") else ""))
+    else:
+        log("②.5 无故事圣经，跳过资产")
+
+    if args.assets_only:
+        log(f"✅ 只出资产：{assets_file.relative_to(OUTPUT)}（人工选定后去掉 --assets-only 再跑）")
+        return
+
+    # 参考图：选定的人物卡上传给 ComfyUI，全片每镜都用它做「全程注意力」
+    ref_comfy_name = ""
+    if manifest and not args.no_ref:
+        pick = assets_mod.pick_reference(manifest, "characters", 0)
+        if pick:
+            try:
+                ref_comfy_name = comfy.upload_image(OUTPUT / pick)
+                log(f"②.5 参考图已就位：{Path(pick).name} → 全片 Ref2VA 锁定")
+            except Exception as e:  # noqa: BLE001
+                log(f"⚠️ 参考图上传失败（{type(e).__name__}），退回 t2v")
+                ref_comfy_name = ""
 
     # 阶段③：集中写完所有 H3 提示词（qwen 用完立即卸载，把内存让给视频模型）
     seconds = args.length / 24.0
@@ -307,6 +355,7 @@ def main():
             prompt=h3_text, seed=20260915 + i,
             width=args.width, height=args.height, length=args.length,
             steps=args.steps, nsfw=not args.no_nsfw,
+            ref_image_name=ref_comfy_name or None,   # Ref2VA：参考图全程注意力锁人物/场景
             timeout=7200,   # 124 帧 ≈ 52 分钟/镜，留足余量（机器有负载时更慢）
         )
         produced = OUTPUT / f"director_{script_path.stem}_{i:02d}.mp4"

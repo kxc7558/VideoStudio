@@ -49,6 +49,51 @@ def generate_video(prompt: str, duration: int = 5, ratio: str = "9:16", timeout_
         return {"ok": False, "video_url": None, "msg": str(e)}
 
 
+def generate_image(prompt: str, size: str = "", model: str = "doubao-seedream-5.0-lite",
+                   timeout_s: int = 300) -> dict:
+    """豆包 Seedream 文生图（云端，质量优于本地 SDXL）。
+
+    返回 {"ok": bool, "url": str|None, "msg": str}。
+    需 doubao-relay 在跑且豆包桌面版带 --remote-debugging-port=9333（CDP 绕风控）。
+    """
+    try:
+        body = {"model": model, "prompt": prompt, "n": 1}
+        if size:
+            body["size"] = size
+        r = httpx.post(
+            f"{RELAY}/v1/images/generations",
+            headers={"Authorization": f"Bearer {RELAY_KEY}"},
+            json=body,
+            timeout=timeout_s,
+        )
+        r.raise_for_status()
+        data = r.json()
+        msg = (data.get("choices") or [{}])[0].get("message", {})
+        imgs = msg.get("images") or [d.get("url") for d in data.get("data", [])]
+        imgs = [u for u in imgs if u]
+        return {"ok": bool(imgs), "url": imgs[0] if imgs else None, "msg": "ok"}
+    except httpx.HTTPStatusError as e:
+        try:
+            detail = e.response.json().get("error", {}).get("message", "")
+        except Exception:
+            detail = str(e)
+        return {"ok": False, "url": None, "msg": detail}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "url": None, "msg": str(e)}
+
+
+def download_image(url: str, dest) -> bool:
+    """下载云端产出的图片到本地。"""
+    try:
+        r = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=120, follow_redirects=True)
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            f.write(r.content)
+        return True
+    except Exception:
+        return False
+
+
 def download_video(url: str, dest) -> bool:
     """下载豆包产出的视频到本地。"""
     try:

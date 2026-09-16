@@ -142,30 +142,54 @@ def _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, t
     return wf
 
 
-def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name=None, use_lora=False):
-    """MiniMax H3 工作流：单模型（FL2VA）同时支持 t2v 与 i2v（首帧）；可选指定尾帧做「首尾帧过渡」。
+def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name=None, use_lora=False, ref_image_name=None, ref_strength=None):
+    """MiniMax H3 工作流，支持三种模式：
 
-    use_lora=True（无审查链路）时：
-    - DiT 换成未剪枝 Q4_K_M GGUF（NaughtyTimes LoRA 按未剪枝模型训练，剪枝版效果大打折扣）；
-    - 在 H3ModelLoaderAny → BasicGuider 之间注入 LoraLoaderModelOnly（强度 1.0，节点 "300"）。
+    - t2v：纯文生视频
+    - i2v：首帧图生（可选 last_frame_name 做首尾帧过渡）
+    - ref2va：**参考图全程注意力**——参考图在每一帧都参与注意力，角色/场景不漂移
+      （康波产线验证过的角色一致性最强方案）
+
+    use_lora=True（无审查链路）时：DiT 换未剪枝 Q4_K_M GGUF + 注入 NaughtyTimes LoRA。
+    BasicGuider 的节点号随 mode 不同（t2v=6 / ref2va=10），故动态定位。
     """
     wf = json.loads((WORKFLOWS / f"h3_{mode}_api.json").read_text(encoding="utf-8"))
-    if use_lora:
+
+    # 动态定位 BasicGuider（LoRA 要插在它上游）
+    guider_id = next((k for k, v in wf.items() if v.get("class_type") == "BasicGuider"), None)
+    if use_lora and guider_id:
         wf["1"]["inputs"]["model_name"] = H3_NSFW_BASE
         wf["300"] = {
             "class_type": "LoraLoaderModelOnly",
             "inputs": {
-                "model": wf["6"]["inputs"]["model"],  # BasicGuider 当前的上游（H3ModelLoaderAny）
+                "model": wf[guider_id]["inputs"]["model"],  # 上游 = H3ModelLoaderAny
                 "lora_name": H3_NSFW_LORA,
                 "strength_model": 1.0,
             },
         }
-        wf["6"]["inputs"]["model"] = ["300", 0]
-    wf["4"]["inputs"].update({"prompt": prompt, "width": width, "height": height, "length": length})
-    wf["5"]["inputs"]["noise_seed"] = seed
-    wf["8"]["inputs"]["steps"] = steps
-    wf["12"]["inputs"]["filename_prefix"] = f"video/{task_id}"
-    if mode == "i2v":
+        wf[guider_id]["inputs"]["model"] = ["300", 0]
+
+    # 按 class_type 动态定位参数节点（各 mode 节点号不同：t2v/i2v 是 4/5/8/12，
+    # ref2va 是 6/7/9/15）——硬编码节点号必踩坑
+    def _find(cls: str):
+        return next((k for k, v in wf.items() if v.get("class_type") == cls), None)
+
+    prompt_id = "6" if mode == "ref2va" else "4"
+    wf[prompt_id]["inputs"].update({"prompt": prompt, "width": width, "height": height, "length": length})
+    noise_id, sched_id, save_id = _find("RandomNoise"), _find("BasicScheduler"), _find("SaveVideo")
+    if noise_id:
+        wf[noise_id]["inputs"]["noise_seed"] = seed
+    if sched_id:
+        wf[sched_id]["inputs"]["steps"] = steps
+    if save_id:
+        wf[save_id]["inputs"]["filename_prefix"] = f"video/{task_id}"
+
+    if mode == "ref2va":
+        # 节点 5 = LoadImage（参考图）；ref_image_size 控制参考图分辨档位
+        wf["5"]["inputs"]["image"] = ref_image_name or image_name
+        if ref_strength and "ref_image_size" in wf["6"]["inputs"]:
+            wf["6"]["inputs"]["ref_image_size"] = ref_strength
+    elif mode == "i2v":
         wf["0"]["inputs"]["image"] = image_name
         if last_frame_name:
             wf["13"] = {"class_type": "LoadImage", "inputs": {"image": last_frame_name}}
@@ -173,9 +197,10 @@ def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, ta
     return wf
 
 
-def _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps=20, last_frame_name=None, use_lora=True, style="real"):
+def _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps=20, last_frame_name=None, use_lora=True, style="real", ref_image_name=None):
     if model == "h3":
-        return _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, last_frame_name, use_lora=use_lora)
+        return _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps,
+                                  last_frame_name, use_lora=use_lora, ref_image_name=ref_image_name)
     return _build_wan_workflow(mode, image_name, prompt, seed, width, height, length, task_id, steps, use_lora, style)
 
 
