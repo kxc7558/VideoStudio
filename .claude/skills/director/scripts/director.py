@@ -432,7 +432,14 @@ def main():
     # 阶段③：集中写完所有 H3 提示词（qwen 用完立即卸载，把内存让给视频模型）
     seconds = args.length / 24.0
     prompts_file = work / "h3_prompts.json"
-    if prompts_file.exists():
+    # ⚠️ 踩坑（2026-09-18）：分镜表重新生成后，h3_prompts.json 还是上一轮的——那些提示词
+    # 是照着**旧分镜**写的，直接复用等于分镜白改（实测踩过一次，白跑一轮）。
+    # 以 mtime 为准：产物比分镜表旧就作废重写，不靠人记得手动清缓存。
+    stale_prompts = (prompts_file.exists()
+                     and prompts_file.stat().st_mtime < shots_file.stat().st_mtime)
+    if stale_prompts:
+        log("③ 提示词比分镜表旧 → 作废重写（分镜改过，旧提示词已失效）")
+    if prompts_file.exists() and not stale_prompts:
         h3_prompts = json.loads(prompts_file.read_text(encoding="utf-8"))
         log(f"③ 复用已有 H3 提示词（{len(h3_prompts)} 条）")
     else:
@@ -470,11 +477,16 @@ def main():
 
     # 阶段④：逐镜出片（H3 独占内存）
     segs = []
+    shots_mtime = shots_file.stat().st_mtime
     for i, shot in enumerate(shots):
         seg = work / f"seg_{i:02d}.mp4"
-        if seg.exists():
+        # 同一类陷阱：分镜表改过后，旧段落是照**旧分镜**出的，不能算数
+        # （否则新镜和旧镜会一起被拼进成片，观众看到画风/内容跳变）
+        if seg.exists() and seg.stat().st_mtime >= shots_mtime:
             segs.append(seg)
             continue
+        if seg.exists():
+            log(f"   第 {i + 1} 镜旧段落早于分镜表，作废重出")
         if i < args.start:
             continue
         ctrl = control_state()
