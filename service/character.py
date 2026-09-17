@@ -13,36 +13,76 @@ import comfy
 from db import profiles_store
 from shared.paths import OUTPUT, UPLOADS, WORKFLOWS
 
-# NoobAI-XL 是 SDXL 系动漫模型：竖版角色卡用 832×1216，符合其训练分布
+# 竖版角色卡 832×1216，两种底模都在 SDXL 训练分布内
 CARD_WIDTH = 832
 CARD_HEIGHT = 1216
 CANDIDATES = 4
-STEPS = 30
-# 底模：WAI-illustrious-SDXL v17（Civitai 榜首动漫微调，1.5M 下载）
-# 对比实测：比 NoobAI-XL v1.0 高 2-3 档（材质/手部/构图），比 Illustrious 官方底座也更准
-CKPT = "WAI-illustrious-SDXL-v17.safetensors"
-# 细节增强 LoRA（盲评实测：温和叠加 8.8 > 不挂 8.5 > 单独 slider@1.0 只有 6.8）
-# 教训：细节 LoRA 用力过猛会劣化画面，必须温和叠加
-DETAIL_LORAS = (
-    ("detail-slider-illustrious.safetensors", 0.8, 0.8),
-    ("detail-tweaker-xl.safetensors", 0.6, 0.6),
-)
-CFG = 5.5
-SAMPLER = "euler_ancestral"
-SCHEDULER = "normal"
 CARD_DIR = OUTPUT / "_character_cards"
 
-_QUALITY = "masterpiece, best quality, very aesthetic, absurdres, solo, 1girl, detailed face, looking at viewer, upper body"
 _ANTI_REAL = "realistic, photorealistic, 3d, worst quality, low quality, bad anatomy, bad hands, watermark, signature, multiple views, chibi"
+_ANTI_ANIME = ("anime, cartoon, illustration, painting, drawing, sketch, 3d render, cgi, doll, "
+               "plastic skin, semi-realistic, "
+               # 社区标准写实负面词（治丑图：畸形/低质/克隆脸）
+               "ugly, lowres, worst quality, low quality, normal quality, jpeg artifacts, blurry, "
+               "deformed iris, deformed pupils, poorly drawn face, poorly drawn hands, "
+               "bad anatomy, bad proportions, bad hands, extra digits, fewer digits, "
+               "extra limbs, missing fingers, fused fingers, too many fingers, long neck, "
+               "cloned face, disfigured, gross proportions, malformed limbs, mutation, "
+               "dehydrated, morbid, mutilated, duplicate, "
+               "text, watermark, signature, username, logo, cropped, out of frame")
+
+# ---- 出图风格：动漫 / 真人（各一套底模 + 提示词模板 + 采样配方）----
+STYLES = {
+    "anime": {
+        "ckpt": "WAI-illustrious-SDXL-v17.safetensors",
+        # 细节增强 LoRA（盲评实测：温和叠加 8.8 > 不挂 8.5 > 单独 slider@1.0 只有 6.8）
+        # 教训：细节 LoRA 用力过猛会劣化画面，必须温和叠加
+        "loras": (
+            ("detail-slider-illustrious.safetensors", 0.8, 0.8),
+            ("detail-tweaker-xl.safetensors", 0.6, 0.6),
+        ),
+        "negative": _ANTI_REAL,
+        "steps": 30, "cfg": 5.5, "sampler": "euler_ancestral", "scheduler": "normal",
+        "suffix": ("masterpiece, best quality, very aesthetic, absurdres, "
+                   "solo, 1girl, single character, full body, standing straight, front view, "
+                   "clear detailed face, plain white background, sharp focus, detailed skin"),
+    },
+    "real": {
+        # 真人向：Juggernaut XL（SDXL 写实标杆，标准提示词体系）
+        "ckpt": "juggernaut-xl-ragnarok.safetensors",
+        "loras": (),
+        "negative": _ANTI_ANIME,
+        "steps": 32, "cfg": 5.0, "sampler": "dpmpp_2m", "scheduler": "karras",
+        "suffix": ("RAW photo, photorealistic, 8k uhd, high quality, film grain, "
+                   "natural skin texture, visible pores, detailed face, natural lighting, "
+                   # 东亚特征（实测必需：不加则出欧美脸——高鼻深目、下颌过硬）
+                   "east asian woman, chinese, korean idol beauty, asian facial features, "
+                   "almond shaped eyes, small straight nose, soft rounded face contour, "
+                   "warm ivory asian skin, subtle makeup, "
+                   "solo, 1woman, single person, full body, standing straight, front view, "
+                   "plain white background, sharp focus, 35mm photograph"),
+    },
+}
+# 兼容旧引用
+CKPT = STYLES["anime"]["ckpt"]
+DETAIL_LORAS = STYLES["anime"]["loras"]
+STEPS = STYLES["anime"]["steps"]
+CFG = STYLES["anime"]["cfg"]
+SAMPLER = STYLES["anime"]["sampler"]
+SCHEDULER = STYLES["anime"]["scheduler"]
+_QUALITY = STYLES["anime"]["suffix"]
+
+_LORAS = {k: v["loras"] for k, v in STYLES.items()}
 
 
-def build_card_workflow(prompt: str, seed: int, batch: int = CANDIDATES, width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> dict:
-    """构建文生图工作流：一次出 batch 张候选（WAI v17 + 细节 LoRA 链）。"""
+def build_card_workflow(prompt: str, seed: int, batch: int = CANDIDATES, width: int = CARD_WIDTH,
+                        height: int = CARD_HEIGHT, style: str = "anime") -> dict:
+    """构建文生图工作流：一次出 batch 张候选。style: anime（WAI+细节 LoRA）/ real（Juggernaut 写实）。"""
+    cfg = STYLES.get(style, STYLES["anime"])
     wf = json.loads((WORKFLOWS / "anchor_t2i_api.json").read_text(encoding="utf-8"))
-    wf["1"]["inputs"]["ckpt_name"] = CKPT
-    # 注入细节增强 LoRA 链（温和叠加，见 DETAIL_LORAS 注释）
+    wf["1"]["inputs"]["ckpt_name"] = cfg["ckpt"]
     model_src, clip_src = ["1", 0], ["1", 1]
-    for i, (lora, sm, sc) in enumerate(DETAIL_LORAS):
+    for i, (lora, sm, sc) in enumerate(cfg["loras"]):
         nid = str(20 + i)
         wf[nid] = {"class_type": "LoraLoader", "inputs": {
             "model": model_src, "clip": clip_src, "lora_name": lora,
@@ -52,10 +92,11 @@ def build_card_workflow(prompt: str, seed: int, batch: int = CANDIDATES, width: 
     wf["2"]["inputs"]["clip"] = clip_src
     wf["3"]["inputs"]["clip"] = clip_src
     wf["2"]["inputs"]["text"] = prompt
-    wf["3"]["inputs"]["text"] = _ANTI_REAL
+    wf["3"]["inputs"]["text"] = cfg["negative"]
     wf["4"]["inputs"].update({"width": width, "height": height, "batch_size": batch})
-    wf["5"]["inputs"].update({"seed": seed, "steps": STEPS, "cfg": CFG, "sampler_name": SAMPLER, "scheduler": SCHEDULER})
-    wf["7"]["inputs"]["filename_prefix"] = "character_card/gen"
+    wf["5"]["inputs"].update({"seed": seed, "steps": cfg["steps"], "cfg": cfg["cfg"],
+                              "sampler_name": cfg["sampler"], "scheduler": cfg["scheduler"]})
+    wf["7"]["inputs"]["filename_prefix"] = f"character_card/{style}"
     return wf
 
 

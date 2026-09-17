@@ -101,12 +101,21 @@ def load_genres() -> dict:
         fm, body = m.group(1), m.group(2)
         name = (re.search(r"^name:\s*(\S+)", fm, re.M) or [None, f.stem])[1]
         match = (re.search(r"match:\s*(.+)$", fm, re.M) or [None, ""])[1].strip()
-        genres[name] = {"match": match, "body": body.strip(), "file": f.name}
+        # priority 写在 metadata.wind-comic.priority（嵌套两层），单独抓数字即可
+        pr = re.search(r"^[ \t]+priority:\s*(\d+)", fm, re.M)
+        genres[name] = {"match": match, "body": body.strip(), "file": f.name,
+                        "priority": int(pr.group(1)) if pr else 0}
     return genres
 
 
 def pick_genre(script_text: str, genres: dict, forced: str = "") -> tuple:
-    """按剧本内容匹配题材（forced 优先）。返回 (题材名, 镜头语言正文)。"""
+    """按剧本内容匹配题材（forced 优先）。返回 (题材名, 镜头语言正文)。
+
+    ⚠️ 踩坑（2026-09-18）：原先取 `hits[0]`，也就是**按文件遍历顺序取第一个命中**——
+       剧本里随便出现一次「回忆 / 内心」就会被判成「内心独白」，
+       于是一整部片子的运镜全变成「极慢推近，慢到几乎察觉不到」，主体也跟着不动。
+       现在改成**按命中次数计分**（命中多的题材才配代表全片），priority 作同分时的次序。
+    """
     if forced and forced in genres:
         return forced, genres[forced]["body"]
     hits = []
@@ -115,16 +124,54 @@ def pick_genre(script_text: str, genres: dict, forced: str = "") -> tuple:
         if not pat:
             continue
         try:
-            if re.search(pat, script_text, re.I):
-                hits.append(name)
+            n = len(re.findall(pat, script_text, re.I))
         except re.error:
             continue
+        if n:
+            hits.append((n, g.get("priority", 0), name))
     if hits:
-        # 取第一个命中的题材（题材包 priority 由文件名顺序近似，够用）
-        name = hits[0]
-        return name, genres[name]["body"]
+        hits.sort(key=lambda x: (-x[0], -x[1], x[2]))
+        log("① 题材命中：" + "、".join(f"{n}×{name}" for n, _p, name in hits))
+        return hits[0][2], genres[hits[0][2]]["body"]
     generic = genres.get("screenwriter")
     return ("screenwriter", generic["body"]) if generic else ("", "")
+
+
+def _pick_char_refs(refs: dict, always: dict, text: str) -> list:
+    """本镜该挂哪几张人物卡：**画面描述里点名的优先**。
+
+    ⚠️ 踩坑（2026-09-18）：原先 always=True 的角色是**每一镜都挂**，于是只有莉莉丝的镜头
+    也把爱丽丝的卡挂上。Ref2VA 的参考图是全程注意力——挂谁就像谁，
+    既让主体被"钉"住不敢动，又让每张卡的 token 参与每一步采样（4~5 张时慢到 2 小时/镜）。
+    现在改成：点名谁挂谁；一个都没点名（如「姐妹的亲密」）才退回 always 标的主角卡。
+    """
+    named = [v for k, v in refs.items() if k and k in text]
+    if named:
+        return named
+    return [v for k, v in refs.items() if always.get(k)]
+
+
+def _pick_scene_ref(scene_refs: dict, text: str) -> list:
+    """本镜该挂哪张场景卡——**每镜只挂一张**。
+
+    ⚠️ 踩坑（2026-09-18）：两张场景卡都标了 always，导致每一帧同时挂「古代石室」和
+    「召唤法阵中央」两个背景参考——同一空间的两张卡在打架。
+    场景名在画面描述里常只以片段出现（「石室中央」「法阵中央」），
+    所以先整体匹配，再从长到短找 ≥2 字的子串，都不中才退回第一张常态场景卡。
+    """
+    if not scene_refs:
+        return []
+    for k, v in scene_refs.items():
+        if k and k in text:
+            return [v]
+    for k, v in scene_refs.items():
+        if not k:
+            continue
+        for n in range(len(k) - 1, 1, -1):
+            for s in range(len(k) - n + 1):
+                if k[s:s + n] in text:
+                    return [v]
+    return [next(iter(scene_refs.values()))]
 
 
 def sample_script(text: str, head: int = 6000, mid: int = 3000, tail: int = 3000) -> str:
@@ -442,8 +489,8 @@ def main():
         # ⚠️ 只用镜头的「画面描述(scene)」匹配：narration/h3 提示词里含故事圣经连续性块
         #（列出全片所有人物），拿它们匹配会让人物卡误挂到每一镜。
         shot_scene = str(shot.get("scene", ""))
-        shot_refs = [v for k, v in char_refs.items() if char_always.get(k) or (k and k in shot_scene)]
-        shot_refs += [v for k, v in scene_refs.items() if scene_always.get(k) or (k and k in shot_scene)]
+        shot_refs = _pick_char_refs(char_refs, char_always, shot_scene) + _pick_scene_ref(scene_refs, shot_scene)
+        log(f"   本镜参考图 {len(shot_refs)} 张")
         if not h3_text:
             continue
         log(f"④ 第 {i + 1}/{len(shots)} 镜：出片中（{args.width}×{args.height}/{args.length}帧/{args.steps}步）…")
@@ -458,7 +505,8 @@ def main():
                 width=args.width, height=args.height, length=args.length,
                 steps=args.steps, nsfw=not args.no_nsfw,
                 ref_image_names=shot_refs or None,   # Ref2VA：人物全程 + 本镜场景，全程注意力锁定
-                timeout=7200,   # 124 帧 ≈ 60 分钟/镜，留足余量（机器有负载时更慢）
+                timeout=14400,  # 124 帧 + 多参考图实测约 2 小时/镜；给到 4 小时，
+                                # ⚠️ 实测 7200s 会在成片前 ~1 分钟判死、误弃已完成的产物
             )
             if ok:
                 break
