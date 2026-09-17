@@ -372,15 +372,21 @@ def main():
         chosen = [x.strip() for x in args.pick.split(",") if x.strip()]
         available = [f for c in manifest.get("characters", []) for f in c.get("files", [])]
         available += [s["file"] for s in manifest.get("scenes", []) if s.get("file")]
-        bad = [c for c in chosen if c not in available]
+        # ⚠️ 踩坑（2026-09-18）：清单里存的是相对路径（_assets_juqing/characters/x.png），
+        # 而 --pick 传的是裸文件名（x.png），直接比对永远匹配不上 → 每张都被判「不存在」。
+        # 这里按「整路径命中 或 文件名命中」双向接受，两种写法都能用。
+        by_name = {Path(f).name for f in available}
+        bad = [c for c in chosen if c not in available and Path(c).name not in by_name]
         if bad:
             log(f"❌ --pick 里有不存在的文件：{bad}")
             log("   可选清单见下方，或看资产目录")
             args.pick = ""
         else:
-            manifest["selected"] = chosen
+            # 统一回清单里的相对路径；顺序按清单走，避免出现清单外的裸名
+            picked_names = {Path(c).name for c in chosen}
+            manifest["selected"] = [f for f in available if Path(f).name in picked_names]
             assets_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-            log(f"②.5 已记录选定：{chosen}")
+            log(f"②.5 已记录选定：{[Path(x).name for x in manifest['selected']]}")
 
     if manifest and not manifest.get("selected") and not args.no_ref:
         log("")
@@ -418,7 +424,7 @@ def main():
                     scene_refs[key] = comfy.upload_image(OUTPUT / s["file"])
                     scene_always[key] = bool(s.get("always"))
             log(f"②.5 参考图就位：{len(char_refs)} 人物 + {len(scene_refs)} 场景 → Ref2VA 锁定"
-                f"（标 always 的每镜都带，其余按镜头文本匹配）")
+                f"（按镜头画面描述点名匹配；场景每镜只挂最匹配的一张）")
         except Exception as e:  # noqa: BLE001
             log(f"⚠️ 参考图上传失败（{type(e).__name__}），退回 t2v")
             char_refs, scene_refs, char_always, scene_always = {}, {}, {}, {}
