@@ -838,12 +838,14 @@ $('oneclick-btn').addEventListener('click', async () => {
     fd.append('idea', idea);
     fd.append('script_file', scriptFile);
     fd.append('style', $('oneclick-style').value);
+    const engine = $('oneclick-engine').value || 'h3';
+    fd.append('engine', engine);
     if (charImage) fd.append('character_image', charImage);
     const r = await fetch('/api/oneclick', { method: 'POST', body: fd });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || '提交失败');
     activeTasks.set(data.task_id, {
-      mode: 'oneclick', model: 'wan', prompt: idea.slice(0, 40) + '…',
+      mode: 'oneclick', model: engine, prompt: idea.slice(0, 40) + '…',
       resolution: '', duration: '约1.5分钟', steps: '',
       state: 'queued', msg: '排队中…', progress: 0, queueState: '', queuePos: 0,
       created: Math.floor(Date.now() / 1000),
@@ -1096,6 +1098,15 @@ async function checkHealth() {
     setDot($('engine-status'), h.comfy ? 'ok' : 'bad', h.comfy ? '引擎就绪' : '引擎未启动');
     setDot($('t2v-status'), h.t2v_ready ? 'ok' : 'warn', h.t2v_ready ? '文生视频可用' : '文生视频模型下载中');
     setDot($('h3-status'), h.h3_ready ? 'ok' : 'warn', h.h3_ready ? 'MiniMax H3 可用' : 'MiniMax H3 未就绪');
+    setDot($('ref2va-status'), h.ref2va_ready ? 'ok' : 'warn',
+      h.ref2va_ready ? 'H3 参考图引擎可用' : 'H3 参考图引擎未就绪');
+    // H3 参考图引擎不可用时，一键成片强制回退 Wan，禁用 h3 选项避免误提交
+    if ($('oneclick-engine')) {
+      const eSel = $('oneclick-engine');
+      eSel.disabled = false;
+      eSel.querySelector('option[value="h3"]').disabled = !h.ref2va_ready;
+      if (!h.ref2va_ready && eSel.value === 'h3') eSel.value = 'wan';
+    }
     setDot($('uncensored-status'), h.uncensored_ready ? 'ok' : 'bad',
       h.uncensored_ready ? '本地无审查模型在线' : '本地无审查模型离线（拆剧本不可用）');
   } catch (e) {

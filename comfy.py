@@ -45,16 +45,42 @@ def t2v_ready() -> bool:
     return any("t2v_high_noise" in n for n in names) and any("t2v_low_noise" in n for n in names)
 
 
-def h3_ready() -> bool:
-    """MiniMax H3 是否就绪：DiT GGUF + safetensors 文本编码器都已就位且节点可加载。"""
+def ref2va_ready() -> bool:
+    """H3 参考图全程注意力（ref2va）是否就绪：参考图节点可加载 + pruned 底模在位。
+
+    出片台主力链路。查 MiniMaxH3ReferenceToVideo 节点 + 模型列表里的 pruned ref2va 底模。
+    """
     if not is_ready():
         return False
+    try:
+        r = httpx.get(COMFY + "/object_info/MiniMaxH3ReferenceToVideo", timeout=15)
+        r.raise_for_status()
+        if "MiniMaxH3ReferenceToVideo" not in r.json():
+            return False
+        names = _h3_model_names()
+        return any("ref2va" in n.lower() for n in names)
+    except Exception:
+        return False
+
+
+def _h3_model_names() -> list:
+    """H3ModelLoaderAny 可加载的模型文件名列表。"""
     try:
         r = httpx.get(COMFY + "/object_info/H3ModelLoaderAny", timeout=15)
         r.raise_for_status()
         info = r.json().get("H3ModelLoaderAny", {})
         model_name = info.get("input", {}).get("required", {}).get("model_name", {})
-        names = list(model_name[0]) if model_name else []
+        return list(model_name[0]) if model_name else []
+    except Exception:
+        return []
+
+
+def h3_ready() -> bool:
+    """MiniMax H3 是否就绪：DiT GGUF + safetensors 文本编码器都已就位且节点可加载。"""
+    if not is_ready():
+        return False
+    try:
+        names = _h3_model_names()
         # 兼容两种命名：官方剪枝版 "MiniMax-H3-*"，leejet 未剪枝 GGUF "minimax_h3_*"
         if not any("MiniMax-H3" in n or "minimax_h3" in n.lower() for n in names):
             return False

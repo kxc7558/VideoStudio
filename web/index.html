@@ -13,6 +13,7 @@
       <span id="engine-status" class="dot pending">检测引擎…</span>
       <span id="t2v-status" class="dot pending">检测文生视频…</span>
       <span id="h3-status" class="dot pending">检测 MiniMax H3…</span>
+      <span id="ref2va-status" class="dot pending">检测 H3 参考图引擎…</span>
       <span id="uncensored-status" class="dot pending" hidden></span>
     </div>
   </header>
@@ -106,13 +107,17 @@
 
     <!-- 无审查专属区：只用 Wan 2.2 + 无审查 LoRA，提示词走本地 uncensored 模型，不碰云端 -->
     <section id="panel-nsfw" class="panel" hidden>
-      <div class="nsfw-banner">🔞 一键成片：写一句想法，剩下的全自动（本地编剧 → 分镜 → 人物抽卡 → 出片约 1.5 分钟短片）</div>
+      <div class="nsfw-banner">🔞 一键成片：写一句想法，剩下的全自动（本地编剧 → 分镜 → 角色/场景参考图 → H3 参考图全程注意力出片 → 逐镜审查 → 拼片）</div>
       <div class="oneclick-box">
         <textarea id="oneclick-idea" rows="3" placeholder="一句话或一段想法，例如：深夜便利店，店员女孩遇到了一个神秘的常客……"></textarea>
         <div class="oneclick-row">
           <select id="oneclick-style">
             <option value="anime">动漫风格</option>
             <option value="real">真人风格</option>
+          </select>
+          <select id="oneclick-engine" title="生成引擎">
+            <option value="h3">H3 参考图引擎（推荐·一致性最强）</option>
+            <option value="wan">Wan 首帧锚定（备用）</option>
           </select>
           <select id="oneclick-script">
             <option value="">自由创作（下方写想法）</option>

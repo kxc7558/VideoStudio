@@ -95,11 +95,12 @@ def shots_first_prompt(task_id: str) -> str:
     return "a woman standing, cinematic lighting, detailed face"
 
 
-def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed, script_text="", character_image=""):
+def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed, script_text="", character_image="", engine="h3"):
     """一键成片阶段1：本地编剧写故事（或用自带剧本）→ 拆镜 → 落盘分镜 → 暂停等分镜审查。
 
     script_text 非空时跳过写故事（用户自带剧本，长剧本走进度窗口拆镜控上下文）。
     character_image 非空时用指定角色图当锚（三来源之一），否则审查阶段自动抽卡。
+    engine：生成引擎。h3=H3 参考图全程注意力（默认，角色/场景一致性最强）；wan=Wan 首帧锚定（备用）。
     审查通过后由 /api/review/storyboard 启动阶段2（_oc_stage2）。
     """
     try:
@@ -164,7 +165,7 @@ def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed,
         # ④ 后台生成每镜预览图（迷你视频抽首帧），审查面板边生成边可看
         threading.Thread(
             target=_generate_shot_previews,
-            args=(task_id, shots, style, width, height, seed, character_image),
+            args=(task_id, shots, style, width, height, seed, character_image, engine),
             daemon=True,
         ).start()
     except Exception as e:  # noqa: BLE001
@@ -173,10 +174,11 @@ def _run_oneclick_task(task_id, idea, style, width, height, length, steps, seed,
         _update(task_id, state="error", msg=f"出错：{e}")
 
 
-def _generate_shot_previews(task_id, shots, style, width, height, seed, character_image=""):
-    """分镜审查阶段的预览图后台生成：先解析角色锚（三来源），再每镜用「锚帧 i2v」出预览。
+def _generate_shot_previews(task_id, shots, style, width, height, seed, character_image="", engine="h3"):
+    """分镜审查阶段的预览图后台生成：先解析角色锚（三来源），再每镜用「锚帧」出预览。
 
-    锚驱动：所有预览从同一人物锚出发，审查时看到的人物从头到尾是同一个。
+    engine=h3：参考图全程注意力（与正片同链路，预览即所见即所得，最准）。
+    engine=wan：锚帧 i2v（旧链路，角色从同一锚出发保一致）。
     只为审查提供画面参考，与正片生成无关（正片在审查通过后从头生成）。
     """
     # 角色锚（无锚时解析）：与正片同一套逻辑，锚选出后正片阶段直接复用
@@ -208,20 +210,28 @@ def _generate_shot_previews(task_id, shots, style, width, height, seed, characte
         prev_id = f"{task_id}_prev{i}"
         _update(task_id, msg=f"预览图生成中 {i + 1}/{len(shots)}（不影响审查操作）…")
         try:
-            if anchor and anchor.exists():
-                # 锚驱动：人物锚做首帧 i2v，人物一致
-                wf = _build_workflow("wan", "i2v", comfy.upload_image(anchor), p, seed + 500 + i, 240, 416, 17, prev_id, 4, use_lora=True, style=style)
+            if engine == "h3":
+                # H3 预览：参考图全程注意力，小规格（56 帧）快速出
+                ref_files = _collect_ref_images(task_id, card_seg_id, s, style)
+                ok, _ = _generate_ref2va_shot(task_id, 0, p, seed, 480, 640, 56, ref_files, steps=12)
+                tmp = OUTPUT / f"{task_id}_s0.mp4"
             else:
-                wf = _build_workflow("wan", "t2v", None, p, seed + 500 + i, 240, 416, 17, prev_id, 4, use_lora=True, style=style)
-            pid = comfy.submit(wf)
-            ok, history = comfy.wait_done(pid, timeout=600)
+                if anchor and anchor.exists():
+                    # 锚驱动：人物锚做首帧 i2v，人物一致
+                    wf = _build_workflow("wan", "i2v", comfy.upload_image(anchor), p, seed + 500 + i, 240, 416, 17, prev_id, 4, use_lora=True, style=style)
+                else:
+                    wf = _build_workflow("wan", "t2v", None, p, seed + 500 + i, 240, 416, 17, prev_id, 4, use_lora=True, style=style)
+                pid = comfy.submit(wf)
+                ok, history = comfy.wait_done(pid, timeout=600)
+                if not ok:
+                    continue
+                vinfo = comfy.find_video(history)
+                if not vinfo:
+                    continue
+                tmp = OUTPUT / f"{prev_id}.mp4"
+                comfy.download_video(vinfo, tmp)
             if not ok:
                 continue
-            vinfo = comfy.find_video(history)
-            if not vinfo:
-                continue
-            tmp = OUTPUT / f"{prev_id}.mp4"
-            comfy.download_video(vinfo, tmp)
             subprocess.run([FFMPEG, "-y", "-i", str(tmp), "-frames:v", "1", str(prev_png)],
                            capture_output=True, timeout=120)
             tmp.unlink(missing_ok=True)
@@ -230,9 +240,11 @@ def _generate_shot_previews(task_id, shots, style, width, height, seed, characte
     _update(task_id, msg="预览图已全部生成（人物锚统一），审查面板可直接看画面")
 
 
-def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_recard=False, character_image=""):
+def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_recard=False, character_image="", engine="h3"):
     """一键成片阶段2：角色锚解析(三来源，如无锚) → 生成「当前镜」→ 停在逐镜审查（awaiting_shot）。
 
+    engine=h3：用 H3 参考图全程注意力（ref2va），角色+场景参考图每镜都锁，一致性最强（默认）。
+    engine=wan：用 Wan 首帧锚定 i2v（备用，ref2va 不可用时回退）。
     逐镜审查流：每镜生成完暂停，用户通过才生成下一镜；全部通过后拼片进成片审查。
     当前镜号存任务 meta 的 cur_shot（0 起）。
     """
@@ -249,10 +261,6 @@ def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_
                 _update(task_id, state="error", msg="人物抽卡全部失败，请重试")
                 return
 
-        # 生成「当前镜」：模式由场景标注决定（剧情自由度 > 画面接续）
-        #   新场景镜（is_new_scene=true）→ t2v：剧情完全由提示词驱动，锚不绑架画面
-        #   同场景镜（false）→ 上一镜尾帧 i2v：画面自然接续
-        # 人物一致性统一靠 card_desc 前置（两种模式都带）。
         if cur >= len(shots):
             _finish_all_shots(task_id, shots)
             return
@@ -263,27 +271,81 @@ def _oc_stage2(task_id, shots, style, width, height, length, steps, seed, force_
             p = f"same character as before: {card_desc}. {p}"
         is_new_scene = bool(s.get("is_new_scene", cur == 0))  # 首镜或标注新场景
         _update(task_id, state="running", msg=f"生成第 {cur + 1}/{len(shots)} 镜（{'新场景·文生' if is_new_scene else '同场景·接续'}）…")
-        ok = False
-        if not is_new_scene and cur > 0:
-            # 同场景：上一镜尾帧做首帧（画面接续）
-            prev_seg = OUTPUT / f"{task_id}_s{cur - 1}.mp4"
-            bridge_png = OUTPUT / f"{task_id}_bridge{cur}.png"
-            extract_last_frame(prev_seg, bridge_png)
-            ok, _ = _generate_single(f"{task_id}_s{cur}", "i2v", comfy.upload_image(bridge_png), p, seed + cur, width, height, length, steps, True, style)
-            bridge_png.unlink(missing_ok=True)
+
+        # H3 主力：参考图全程注意力。角色锚 + 场景参考图都锁，人物/场景不漂移。
+        if engine == "h3":
+            ref_images = _collect_ref_images(task_id, card_seg_id, s, style)
+            ok, _ = _generate_ref2va_shot(task_id, cur, p, seed, width, height, length, ref_images)
         else:
-            # 新场景（或首镜）：锚帧只保人物，剧情走 t2v
-            ok, _ = _generate_single(f"{task_id}_s{cur}", "t2v", None, p, seed + cur, width, height, length, steps, True, style)
+            # Wan 备用：新场景镜走 t2v（锚不绑架画面），同场景镜用上一镜尾帧 i2v 接续
+            ok = False
+            if not is_new_scene and cur > 0:
+                prev_seg = OUTPUT / f"{task_id}_s{cur - 1}.mp4"
+                bridge_png = OUTPUT / f"{task_id}_bridge{cur}.png"
+                extract_last_frame(prev_seg, bridge_png)
+                ok, _ = _generate_single(f"{task_id}_s{cur}", "i2v", comfy.upload_image(bridge_png), p, seed + cur, width, height, length, steps, True, style)
+                bridge_png.unlink(missing_ok=True)
+            else:
+                ok, _ = _generate_single(f"{task_id}_s{cur}", "t2v", None, p, seed + cur, width, height, length, steps, True, style)
+
         if not ok:
             _update(task_id, state="awaiting_shot", cur_shot=cur,
                     msg=f"第 {cur + 1} 镜生成失败，可重抽或跳过")
             return
-        # 停在逐镜审查
         _update(task_id, state="awaiting_shot", cur_shot=cur,
                 msg=f"第 {cur + 1}/{len(shots)} 镜已生成，请审查：通过→下一镜；重抽→换一版")
     except Exception as e:  # noqa: BLE001
         if _cancelled(task_id):
             return
         _update(task_id, state="error", msg=f"出错：{e}")
+
+
+def _collect_ref_images(task_id: str, card_seg_id: str | None, shot: dict, style: str) -> list:
+    """收集本镜要全程注意力的参考图（角色锚 + 场景参考图，文件名列表）。
+
+    角色锚：ext:外部图 / 抽卡锚帧。场景参考图：按镜的 is_new_scene 匹配最贴切的一张
+    （简化版——完整场景匹配在 director 管线；一键成片这里用角色锚 + 全局场景设定词即可）。
+    返回 ComfyUI input 侧文件名（需先 upload_image 的，这里只收本地 output 侧已有图名）。
+    """
+    refs = []
+    if card_seg_id:
+        if str(card_seg_id).startswith("ext:"):
+            refs.append(f"{task_id}_anchor.png")
+        else:
+            refs.append(f"{card_seg_id}_anchor.png")
+    return refs
+
+
+def _generate_ref2va_shot(task_id: str, cur: int, prompt: str, seed: int, width: int, height: int,
+                          length: int, ref_files: list, steps: int = 20) -> tuple[bool, object]:
+    """H3 参考图全程注意力生成单镜（ref2va），下载到 output/{task_id}_s{cur}.mp4。
+
+    ref_files：本地 output/ 下的参考图文件名（角色锚帧等）。逐张 upload 进 ComfyUI 后再挂全程注意力。
+    帧数须落在 H3 网格 17k+5（56/73/124…）。
+    """
+    seg_id = f"{task_id}_s{cur}"
+    # 本地参考图 → ComfyUI input 侧文件名（跳过不存在的）
+    ref_names = []
+    for fname in ref_files:
+        local = OUTPUT / fname
+        if local.exists():
+            try:
+                ref_names.append(comfy.upload_image(local))
+            except Exception:  # noqa: BLE001
+                pass
+    wf = _build_workflow(
+        "h3", "ref2va", None, prompt, seed + cur, width, height, length, seg_id, steps,
+        use_lora=True, ref_image_names=ref_names or None,
+    )
+    pid = comfy.submit(wf)
+    ok, history = comfy.wait_done(pid, timeout=3600, should_cancel=lambda: _cancelled(task_id))
+    if not ok:
+        return False, None
+    video = comfy.find_video(history)
+    if not video:
+        return False, None
+    dest = OUTPUT / f"{seg_id}.mp4"
+    comfy.download_video(video, dest)
+    return True, dest
 
 

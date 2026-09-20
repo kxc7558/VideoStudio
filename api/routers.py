@@ -58,6 +58,7 @@ async def oneclick(
     seed: int = Form(-1),
     script_file: str = Form(""),
     character_image: str = Form(""),
+    engine: str = Form("h3"),
 ):
     """一键成片：一个输入框 + 一个按钮的极简入口，其余全自动。
 
@@ -65,11 +66,17 @@ async def oneclick(
     剧本内容只在本地流转（读文件 → 本地模型），不打印、不落日志。
     character_image：角色定妆图文件名（可选，来源：直接上传的 /uploads 文件名，
     或角色库 output/_character_cards/ 下的文件名）。给了就跳过自动抽卡。
+    engine：生成引擎。h3=H3 参考图全程注意力（默认，一致性最强）；wan=Wan 首帧锚定（备用）。
     """
     if not comfy.is_ready():
         return JSONResponse({"error": "生成引擎（ComfyUI）未启动，请先启动它"}, 503)
-    if not comfy.t2v_ready():
-        return JSONResponse({"error": "文生视频模型还没就绪"}, 503)
+    engine = engine if engine in ("h3", "wan") else "h3"
+    if engine == "h3":
+        if not comfy.ref2va_ready():
+            return JSONResponse({"error": "H3 参考图引擎（ref2va）还没就绪（模型未下载或需重启引擎），可切到 Wan 引擎"}, 503)
+    else:
+        if not comfy.t2v_ready():
+            return JSONResponse({"error": "文生视频模型还没就绪"}, 503)
     if not ai.uncensored_ready():
         return JSONResponse({"error": "本地编剧模型（Ollama qwen3.8）未就绪"}, 503)
 
@@ -94,18 +101,18 @@ async def oneclick(
         seed = random.randint(1, 2**31 - 1)
     task_id = uuid.uuid4().hex[:12]
     _update(
-        task_id, state="queued", msg="排队中…", mode="oneclick", model="wan",
+        task_id, state="queued", msg="排队中…", mode="oneclick", model=engine,
         prompt=(script_file.strip() and f"剧本：{Path(script_file).name}") or idea[:80],
         seed=seed, resolution=resolution, duration="约1.5分钟",
-        style=style, character_image=character_image.strip(),
+        style=style, character_image=character_image.strip(), engine=engine,
         created=int(time.time()),
     )
     threading.Thread(
         target=_run_oneclick_task,
-        args=(task_id, idea.strip(), style, width, height, 81, 20, seed, script_text, character_image.strip()),
+        args=(task_id, idea.strip(), style, width, height, 81, 20, seed, script_text, character_image.strip(), engine),
         daemon=True,
     ).start()
-    return {"task_id": task_id, "seed": seed}
+    return {"task_id": task_id, "seed": seed, "engine": engine}
 
 
 # ---- 一键成片的人工审查端点（分镜意见改写 / 单镜重抽 / 换锚 / 成片检查修复 / 通过） ----
@@ -191,6 +198,7 @@ def health():
         "comfy": comfy.is_ready(),
         "t2v_ready": comfy.t2v_ready(),
         "h3_ready": comfy.h3_ready(),
+        "ref2va_ready": comfy.ref2va_ready(),
         "uncensored_ready": ai.uncensored_ready(),
     }
 
@@ -623,6 +631,7 @@ def review_storyboard(
             target=_oc_stage2,
             args=(task_id, shots, t.get("style", "real"), RESOLUTIONS.get(t.get("resolution", ""), (480, 832))[0],
                   RESOLUTIONS.get(t.get("resolution", ""), (480, 832))[1], 81, 20, t.get("seed", 42)),
+            kwargs={"engine": t.get("engine", "h3"), "character_image": t.get("character_image", "")},
             daemon=True,
         ).start()
         return {"status": "approved"}
@@ -755,6 +764,7 @@ def review_recard(task_id: str = Form(...)):
     threading.Thread(
         target=_oc_stage2,
         args=(task_id, shots, t.get("style", "real"), w, h, 81, 20, new_seed),
+        kwargs={"engine": t.get("engine", "h3"), "character_image": t.get("character_image", "")},
         daemon=True,
     ).start()
     return {"status": "recarding", "new_seed": new_seed}
@@ -788,6 +798,7 @@ def review_shot_next(task_id: str = Form(...)):
     threading.Thread(
         target=_oc_stage2,
         args=(task_id, shots, t.get("style", "real"), w, h, 81, 20, t.get("seed", 42) or 42),
+        kwargs={"engine": t.get("engine", "h3"), "character_image": t.get("character_image", "")},
         daemon=True,
     ).start()
     return {"status": "next_shot", "next": cur + 1}

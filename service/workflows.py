@@ -153,11 +153,14 @@ def _build_h3_workflow(mode, image_name, prompt, seed, width, height, length, ta
     use_lora=True（无审查链路）时：DiT 换未剪枝 Q4_K_M GGUF + 注入 NaughtyTimes LoRA。
     BasicGuider 的节点号随 mode 不同（t2v=6 / ref2va=10），故动态定位。
     """
-    wf = json.loads((WORKFLOWS / f"h3_{mode}_api.json").read_text(encoding="utf-8"))
+    # ref2va 单文件已指向 pruned 主力模型；i2v/t2v 用官方 fl2va 版
+    wf_name = f"h3_{mode}_api.json"
+    wf = json.loads((WORKFLOWS / wf_name).read_text(encoding="utf-8"))
 
-    # 动态定位 BasicGuider（LoRA 要插在它上游）
+    # 动态定位 BasicGuider（LoRA 要插在它上游）。
+    # ref2va 的 base 是专属的 ref2va 模型，不能被换成未剪枝 FL2VA，故 LoRA 注入仅限 t2v/i2v。
     guider_id = next((k for k, v in wf.items() if v.get("class_type") == "BasicGuider"), None)
-    if use_lora and guider_id:
+    if use_lora and guider_id and mode != "ref2va":
         wf["1"]["inputs"]["model_name"] = H3_NSFW_BASE
         wf["300"] = {
             "class_type": "LoraLoaderModelOnly",

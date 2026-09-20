@@ -16,11 +16,14 @@ def _cancelled(task_id: str) -> bool:
     return bool(tasks.get(task_id, {}).get("cancelled"))
 
 
-def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, length, steps, last_image_name=None, first_local_path=None, last_local_path=None, nsfw=False, style="real"):
+def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, length, steps, last_image_name=None, first_local_path=None, last_local_path=None, nsfw=False, style="real", ref_image_names=None):
     try:
         if _cancelled(task_id):
             return
         _update(task_id, state="running", msg="正在生成，请稍候…")
+        # 有参考图且模型是 H3 → 参考图全程注意力（ref2va，角色一致性最强）
+        if ref_image_names and model == "h3":
+            mode = "ref2va"
         seconds = length / 24.0 if model == "h3" else 0.0
         # 指定首尾帧：先让本地视觉模型看首尾两帧，再写过渡提示词（H3 FL2VA 官方格式，尽力而为）
         # nsfw=True 时走本地 uncensored 模型（无审查出片不碰云端 DeepSeek）。
@@ -40,7 +43,7 @@ def _run_task(task_id, model, mode, image_name, prompt, seed, width, height, len
             if t:
                 _update(task_id, ai_prompts=[{"segment": 1, "original": prompt, "rewritten": t}])
                 prompt = t
-        wf = _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps, last_image_name, use_lora=nsfw, style=style)
+        wf = _build_workflow(model, mode, image_name, prompt, seed, width, height, length, task_id, steps, last_image_name, use_lora=nsfw, style=style, ref_image_names=ref_image_names)
         prompt_id = comfy.submit(wf)
         if _cancelled(task_id):
             comfy.cancel(prompt_id)
