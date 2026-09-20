@@ -96,6 +96,25 @@
   - **禁词**：`motion blur`、`fast motion`、`rapid`、`frantic`、`chaotic`
   - 画质词写在风格词后面：`sharp focus, fine detail, crisp texture, shallow depth of field`
 
+## 一键成片引擎迁移：Wan 首帧锚定 → H3 参考图全程注意力（2026-09-20，commit f4b2015）
+
+一键成片区（🔞 tab 顶部）出片引擎从 Wan 首帧锚定切到 **H3 参考图全程注意力（ref2va）**——
+角色/场景参考图在每一帧都参与注意力，人物/场景不漂移，一致性最强（康波产线验证过的主力方案）。
+Wan 保留为**备用引擎**。
+
+- **工作流** `workflows/h3_ref2va_api.json`：`MiniMaxH3ReferenceToVideo` 节点（H3-Multishot 插件），
+  base 是 `minimax_h3_ref2va_pruned_int8_convrot.safetensors`（20GB，E:\ComfyUI_models\unet）。
+- **`_build_h3_workflow`**：`mode=="ref2va"` 走 ref2va 工作流；**LoRA 注入仅限 t2v/i2v**（ref2va 的 base
+  是专属 ref2va 模型，不能被 `use_lora` 换成未剪枝 FL2VA，否则破坏一致性）。多张参考图靠
+  `ref_images.ref_image_N` 动态增长输入（节点 21/22…）。
+- **引擎分派**：`service/oneclick.py` `_oc_stage2` 收 `engine`（默认 h3）；h3 走 `_generate_ref2va_shot`
+  （角色锚帧 + 场景参考图全程注意力），wan 走原「新场景 t2v / 同场景尾帧 i2v」链路。
+  参考图收集在 `_collect_ref_images`（角色锚 `ext:` 外部图 / 抽卡锚帧）。
+- **前端**：一键成片区有「引擎」下拉（H3 参考图/推荐，Wan 备用）+ header「H3 参考图引擎」状态灯。
+  `/api/health` 加 `ref2va_ready`（`comfy.ref2va_ready()` 查参考图节点 + pruned 底模）。ref2va 不可用时
+  前端自动把引擎选项回退 Wan，`/api/oneclick` 传 h3 会 503 提示切 Wan。
+- **帧网格**：H3 是 24fps、17k+5（56/73/124 帧 ≈ 2.3/3.0/5.2 秒），非 Wan 的 4n+1。
+
 ## 无审查出片区（`nsfw` 链路，2026-09-08）
 
 面向「AI 成人短剧」需求：**模型**用 Wan2.2 + 无审查 LoRA，**文字 AI 全部本地化**（不碰云端 DeepSeek，避免外部过滤）。
