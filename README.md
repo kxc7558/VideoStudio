@@ -4,6 +4,12 @@
 
 基于 ComfyUI 的图生视频 / 文生视频能力做了完整封装，普通人不需要懂 ComfyUI 的节点图，在网页界面上选图、写一句话、点按钮，视频就出来了。
 
+<p align="center">
+  <img src="assets/demo_frame.png" alt="出片台生成效果示例" width="560"/>
+</p>
+
+<p align="center"><em>▲ 由出片台生成的视频片段（本地 8GB 显存，Wan 2.2 模型，约 25 分钟出片）</em></p>
+
 ## 解决什么问题
 
 - **ComfyUI 太专业**：节点图、模型文件、采样参数……普通人根本看不懂
