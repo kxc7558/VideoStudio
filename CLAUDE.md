@@ -42,10 +42,10 @@
 | `workflows/` | ComfyUI 节点图 json（wan 的 `i2v_api.json`/`t2v_api.json` + h3 的 `h3_*_api.json`） |
 | `run.bat` | 一键启动脚本 |
 | `_run_batch_seg2to10.py` | **离线批量产线**：故事分段逐段高清重生成，断点续跑 + 可被桌宠控制 |
-| `_pet.py` | **桌宠**：Hello Kitty 悬浮窗，双击暂停/继续、右键菜单，贴边自动隐藏 |
-| `_monitor_progress.py` | 命令行进度监控：`python _monitor_progress.py [间隔秒]` |
+| `scripts/_pet.py` | **桌宠**：Hello Kitty 悬浮窗，双击暂停/继续、右键菜单，贴边自动隐藏 |
+| `scripts/_monitor_progress.py` | 命令行进度监控：`python scripts/_monitor_progress.py [间隔秒]` |
 | `_finalize_1080p.py` | 多段交叉溶解拼接 + 升 1080p + 锐化（一步到位只编码一次） |
-| `_upscale_realesrgan.py` | Real-ESRGAN 本地超分：拆帧 → 逐帧放大 → 重组 |
+| `scripts/_upscale_realesrgan.py` | Real-ESRGAN 本地超分：拆帧 → 逐帧放大 → 重组 |
 | `archive/` | 已完成任务的留档（4 个一次性脚本 + 历史日志 + 测试帧），见 `archive/README.md` |
 
 > 根目录 `_` 开头的是**手搓的离线产线脚本**，不经过 `app.py`，直接调 `comfy.py` 往 ComfyUI 提交。
@@ -160,7 +160,7 @@ Wan 保留为**备用引擎**。
 
 **续跑前必须检查 `_control.txt`**——它现在是 `STOP`，不改成 `RUN`（或清空）脚本一启动就退出。
 
-### 桌宠（`_pet.py` + `启动桌宠.bat`）
+### 桌宠（`scripts/_pet.py` + `启动桌宠.bat`）
 
 **v5 · 纯形象 + 一键拉起产线**（2026-09-04）。v4 的问题是：窗口太大（花+文字占地方）、且「继续」只写 `_control.txt` 不拉进程——重启后引擎和批量脚本都死了，没人读文件，继续形同虚设。v5 针对性改：
 

@@ -9,8 +9,8 @@
        结果是整片十几小时算力全废。所以本脚本**强制要求人物 + 场景全部选齐**才写盘。
 
 用法
-    python _pick_assets.py --list                    # 只看池子里有什么（不写盘）
-    python _pick_assets.py 莉莉丝=a12 爱丽丝=a07 主人=a03 古代石室=s02 召唤法阵中央=s05
+    python scripts/_pick_assets.py --list                    # 只看池子里有什么（不写盘）
+    python scripts/_pick_assets.py 莉莉丝=a12 爱丽丝=a07 主人=a03 古代石室=s02 召唤法阵中央=s05
     不写 .png 后缀、只给编号即可；写盘前自动备份 assets.json。
 """
 import json
@@ -20,7 +20,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.stdout.reconfigure(encoding="utf-8")
 

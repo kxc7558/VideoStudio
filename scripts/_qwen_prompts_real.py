@@ -5,7 +5,7 @@
 本脚本只写"任务说明书"，提示词内容全部由本地无审查模型生成。
 
 用法：
-    python _qwen_prompts_real.py <名字> [组数=12] [style=anime] [ckpt覆盖]
+    python scripts/_qwen_prompts_real.py <名字> [组数=12] [style=anime] [ckpt覆盖]
       style=anime  角色卡（WAI-illustrious 赛璐璐，产物 {名字}_a01.png）
       style=real   写实人像（Juggernaut，产物 {名字}_r01.png）
       style=scene  场景背景（同动漫底模，产物 {场景名}_s01.png）
@@ -22,7 +22,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.stdout.reconfigure(encoding="utf-8")
 

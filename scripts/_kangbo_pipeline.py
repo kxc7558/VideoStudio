@@ -2,7 +2,7 @@
 """康波演讲片产线：定妆照 → Qwen-Image-Edit 批量出 12 关键帧 → Wan i2v 批量出 12 段 → 拼接。
 
 幂等：每步产物存在即跳过（断点续跑）。控制：_control.txt（RUN/PAUSE/STOP，与批量产线同约定）。
-用法：python _kangbo_pipeline.py [frames|videos|all]
+用法：python scripts/_kangbo_pipeline.py [frames|videos|all]
 """
 import json
 import subprocess
@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, r"d:\VideoStudio")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8")
 import comfy
 from shared import ffmpeg_tools
@@ -49,7 +49,7 @@ def log(msg: str) -> None:
 # ---------- 阶段 1：关键帧（Qwen-Image-Edit） ----------
 
 def build_edit_workflow(edit_prompt: str, neg: str, seed: int) -> dict:
-    wf = json.loads((Path(r"d:\VideoStudio") / "workflows" / "qwen_edit_api.json").read_text(encoding="utf-8"))
+    wf = json.loads((Path(str(Path(__file__).resolve().parents[1])) / "workflows" / "qwen_edit_api.json").read_text(encoding="utf-8"))
     wf["5"]["inputs"]["image"] = "kangbo_anchor.png"   # 已 upload 到引擎 input
     wf["6"]["inputs"]["prompt"] = edit_prompt
     wf["7"]["inputs"]["text"] = neg

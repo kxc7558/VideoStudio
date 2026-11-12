@@ -17,7 +17,7 @@ from pathlib import Path
 print = functools.partial(print, flush=True)
 import httpx
 
-BASE = Path(r"D:\VideoStudio")
+BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE))
 WORK = BASE / "output" / "_nsfw_long"
 WORK.mkdir(exist_ok=True)

@@ -13,7 +13,7 @@ Codex 把 6 张全出成了照片级写实 + 满图日文招牌/海报/黑板字
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8")
 
 from service.assets import codex_image  # noqa: E402

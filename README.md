@@ -119,7 +119,7 @@ run.bat
 ```bash
 D:\ComfyUI_Wan\run_comfyui.bat    # 引擎
 python _run_batch_seg2to10.py      # 批量产线（断点续跑）
-python _monitor_progress.py 30     # 命令行看进度
+python scripts/_monitor_progress.py 30     # 命令行看进度
 ```
 
 ## 目录结构
@@ -128,11 +128,8 @@ python _monitor_progress.py 30     # 命令行看进度
 web/                          前端（HTML+JS，无构建）
 api/  service/  db/  shared/  分层业务代码（调用铁律：api → service → db）
 workflows/                    ComfyUI 节点图（Wan i2v/t2v、H3、角色卡、Qwen 三视图）
-_pet.py                       桌宠（悬浮窗，控制批量产线）
-_run_batch_seg2to10.py        离线批量产线（幂等断点续跑 + OOM 自愈）
-_kangbo_v4_pipeline.py        演讲转视频产线（ASR 质检 + TTS 时长驱动帧数）
-_finalize_1080p.py            交叉溶解拼接 + 1080p 升采样
-_upscale_realesrgan.py        Real-ESRGAN 本地超分（逐帧，可断点续跑）
+scripts/                      一次性脚本与产线（桌宠 / 离线批量 / 演讲转视频 / 1080p 收尾 / 超分 …）
+                              脚本内的路径一律以仓库根为基准（scripts/ 的上一级）
 archive/                      已完成任务留档
 ```
 

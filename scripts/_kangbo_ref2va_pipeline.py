@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, r"d:\VideoStudio")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8")
 import httpx
 
@@ -82,7 +82,7 @@ def log(msg: str) -> None:
 
 
 def build_ref2va_workflow(prompt: str, seed: int) -> dict:
-    wf = json.loads((Path(r"d:\VideoStudio") / "workflows" / "h3_ref2va_api.json").read_text(encoding="utf-8"))
+    wf = json.loads((Path(str(Path(__file__).resolve().parents[1])) / "workflows" / "h3_ref2va_api.json").read_text(encoding="utf-8"))
     wf["5"]["inputs"]["image"] = REF_NAME
     wf["6"]["inputs"]["prompt"] = prompt
     wf["7"]["inputs"]["noise_seed"] = seed

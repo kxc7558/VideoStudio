@@ -6,14 +6,14 @@
 - 奇幻设定（紫红发/金角/金瞳）套写实风格会像廉价 cosplay → 变体里收敛成"可选的挑染/小角"
 - 写实向的"美"来自：柔和光质 + 干净构图 + 细腻皮肤，而非堆砌形容词
 
-用法：python _real_variants.py [角色名]
+用法：python scripts/_real_variants.py [角色名]
 """
 import json
 import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.stdout.reconfigure(encoding="utf-8")
 

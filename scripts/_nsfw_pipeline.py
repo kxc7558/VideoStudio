@@ -17,7 +17,7 @@ from pathlib import Path
 print = functools.partial(print, flush=True)
 import httpx
 
-BASE = Path(r"D:\VideoStudio")
+BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE))
 PROMPT_FILE = Path(r"C:\Users\32492\Desktop\tishici.txt")
 STORY_FILE = BASE / "output" / "_nsfw_story.txt"

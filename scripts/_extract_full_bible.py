@@ -7,8 +7,8 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent / ".claude" / "skills" / "director" / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".claude" / "skills" / "director" / "scripts"))
 sys.stdout.reconfigure(encoding="utf-8")
 
 import ai

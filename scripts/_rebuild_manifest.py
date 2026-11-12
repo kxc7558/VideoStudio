@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """按磁盘实际文件重建 assets.json（含人工选定与参考图匹配标记）。
 
-用法：python _rebuild_manifest.py --pick "莉莉丝_08.png,爱丽丝_10.png,主人_04.png,古代石室_04.png,召唤法阵中央_04.png"
+用法：python scripts/_rebuild_manifest.py --pick "莉莉丝_08.png,爱丽丝_10.png,主人_04.png,古代石室_04.png,召唤法阵中央_04.png"
 """
 import argparse
 import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8")
 
 ASSET_DIR = Path("output/_assets_juqing")

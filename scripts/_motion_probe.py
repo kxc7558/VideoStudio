@@ -9,7 +9,7 @@
 不另起一套，避免「测的和跑的不是一回事」。
 
 用法：
-    python _motion_probe.py [镜号=0] [帧数=56] [标签=probe]
+    python scripts/_motion_probe.py [镜号=0] [帧数=56] [标签=probe]
 结果写 output/_probe_<标签>.json
 """
 import importlib.util
@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.stdout.reconfigure(encoding="utf-8")
 

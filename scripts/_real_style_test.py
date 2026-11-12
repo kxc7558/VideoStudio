@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """真人风格基线测试：用已在本机的 RealVisXL V5.0 出角色卡（人物描述走本地转换）。
 
-用法：python _real_style_test.py [模型文件名] [角色名]
+用法：python scripts/_real_style_test.py [模型文件名] [角色名]
 """
 import json
 import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.stdout.reconfigure(encoding="utf-8")
 

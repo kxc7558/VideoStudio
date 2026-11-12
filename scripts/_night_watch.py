@@ -6,14 +6,14 @@
 - 动态度只用**数值指标**（帧间差），不把无审查画面交给视觉模型判读
 - 全 12 段齐了就退出（退出即触发通知），或到 MAX_HOURS 上限
 
-用法：python _night_watch.py [期望段数=12]
+用法：python scripts/_night_watch.py [期望段数=12]
 """
 import json
 import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8")
 
 from _motion_verify import motion_score

@@ -2,7 +2,7 @@
 """视频批量生成进度监控：周期打印"第几段 / 采样步骤 / 完成数 / 预计剩余时间"。
 
 依赖 ComfyUI 的 /history 与 /queue，以及采样日志里的进度条。
-用法：python _monitor_progress.py [间隔秒]，默认 60 秒打印一次。
+用法：python scripts/_monitor_progress.py [间隔秒]，默认 60 秒打印一次。
 """
 import re
 import sys
